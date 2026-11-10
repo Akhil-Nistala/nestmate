@@ -1,0 +1,64 @@
+# WHY themes live here (not only in CSS): Streamlit's own widgets (inputs, sliders,
+# tables, buttons) read these values. Defining BOTH [theme.light] and [theme.dark]
+# makes every native control correct in either mode, and Streamlit follows the
+# viewer's system setting until they use the in-app toggle.
+#
+# Palette: warm paper + ink with one terracotta accent. WHY: a home/housing
+# product should feel warm and human, and it moves us away from the default
+# teal/purple "AI dashboard" look.
+
+[theme]
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
+headingFont = "'Instrument Serif':https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
+codeFont = "'Geist Mono':https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+headingFontWeights = 400
+baseRadius = "10px"
+buttonRadius = "999px"
+showWidgetBorder = true
+
+[theme.light]
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
+headingFont = "'Instrument Serif':https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
+codeFont = "'Geist Mono':https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+headingFontWeights = 400
+primaryColor = "#C2512A"
+backgroundColor = "#F6F4EF"
+secondaryBackgroundColor = "#EEEAE2"
+textColor = "#1A1917"
+linkColor = "#C2512A"
+borderColor = "#E2DDD3"
+dataframeBorderColor = "#E2DDD3"
+dataframeHeaderBackgroundColor = "#F1EEE7"
+baseRadius = "10px"
+buttonRadius = "999px"
+showWidgetBorder = true
+chartCategoricalColors = ["#C2512A", "#3F7D5C", "#4F5BB8", "#C08A1E", "#9A4C8C", "#3C83A8"]
+
+[theme.dark]
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
+headingFont = "'Instrument Serif':https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
+codeFont = "'Geist Mono':https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+headingFontWeights = 400
+primaryColor = "#E2734C"
+backgroundColor = "#131211"
+secondaryBackgroundColor = "#211F1C"
+textColor = "#F2EFE9"
+linkColor = "#E2734C"
+borderColor = "#2F2C28"
+dataframeBorderColor = "#2F2C28"
+dataframeHeaderBackgroundColor = "#1B1A18"
+baseRadius = "10px"
+buttonRadius = "999px"
+showWidgetBorder = true
+chartCategoricalColors = ["#E2734C", "#5FA77E", "#7C86D9", "#D6A23B", "#B970A9", "#5AA3C7"]
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = true
+showSidebarNavigation = false
+
+[browser]
+gatherUsageStats = false
+
+[server]
+runOnSave = false

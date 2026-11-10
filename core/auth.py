@@ -1,0 +1,113 @@
+"""
+Accounts: email + password login with two roles.
+
+  member - a fresher/intern. Sees only their own profile, matches and flat.
+  admin  - HR at a partner organisation. Sees the whole-cohort dashboard.
+
+WHY a JSON file (not a DB or an auth provider): a 48h prototype needs real
+sign-up/login behaviour the panel can poke at, not production infrastructure.
+Swapping this module for Auth0/Cognito later doesn't touch any page code.
+
+WHY PBKDF2 with a per-user salt: it is in the standard library (no new
+dependency) and never stores a password in plain text, even in a demo.
+"""
+import hashlib
+import hmac
+import json
+import os
+import secrets
+from datetime import datetime, timezone
+
+from core.encode import DATA_DIR
+from core.schema import ALLOWED_DOMAINS, email_domain, is_allowed_email
+
+ACCOUNTS_JSON = os.path.join(DATA_DIR, "accounts.json")
+MIN_PASSWORD = 8
+_ITERATIONS = 200_000
+
+# Seeded HR account so the admin route can be demoed with a real login.
+DEMO_ADMIN = {"email": "hr@deloitte.com", "password": "nestmate-hr", "name": "Priya Nair"}
+
+
+def _hash(password, salt_hex):
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), _ITERATIONS).hex()
+
+
+def _new_record(name, email, password, role, **extra):
+    salt = secrets.token_hex(16)
+    return {"email": email, "name": name, "role": role,
+            "organisation": ALLOWED_DOMAINS.get(email_domain(email), ""),
+            "salt": salt, "password_hash": _hash(password, salt),
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), **extra}
+
+
+def _load():
+    if os.path.exists(ACCOUNTS_JSON):
+        with open(ACCOUNTS_JSON, encoding="utf-8") as f:
+            return json.load(f)
+    accounts = {DEMO_ADMIN["email"]: _new_record(DEMO_ADMIN["name"], DEMO_ADMIN["email"],
+                                                 DEMO_ADMIN["password"], "admin")}
+    _save(accounts)
+    return accounts
+
+
+def _save(accounts):
+    with open(ACCOUNTS_JSON, "w", encoding="utf-8") as f:
+        json.dump(accounts, f, indent=2)
+
+
+def public(record):
+    """What the app keeps in the session: never the hash or salt."""
+    return {k: v for k, v in record.items() if k not in ("salt", "password_hash")}
+
+
+def member_id(email):
+    # Stable id from the email, so re-signing up maps to the same cohort profile.
+    return "N" + hashlib.sha1(email.lower().encode()).hexdigest()[:6]
+
+
+def sign_up(name, email, password, confirm, gender, office, joining_month):
+    """Returns (account, None) on success or (None, error message)."""
+    name, email = name.strip(), email.strip().lower()
+    if not name:
+        return None, "Enter your full name."
+    if "@" not in email:
+        return None, "Enter a valid email address."
+    # WHY a domain allow-list: verified work/college email is our trust & safety layer.
+    if not is_allowed_email(email):
+        return None, (f"{email_domain(email)} isn't a partner organisation yet. "
+                      f"Use an email from: {', '.join(ALLOWED_DOMAINS)}.")
+    if len(password) < MIN_PASSWORD:
+        return None, f"Password must be at least {MIN_PASSWORD} characters."
+    if password != confirm:
+        return None, "Passwords don't match."
+    accounts = _load()
+    if email in accounts:
+        return None, "An account with this email already exists. Log in instead."
+    accounts[email] = _new_record(name, email, password, "member", user_id=member_id(email),
+                                  gender=gender, office_location=office, joining_month=joining_month)
+    _save(accounts)
+    return public(accounts[email]), None
+
+
+def log_in(email, password):
+    """Returns (account, None) or (None, error). One generic error on purpose:
+    don't reveal whether the email exists."""
+    rec = _load().get(email.strip().lower())
+    if rec and hmac.compare_digest(rec["password_hash"], _hash(password, rec["salt"])):
+        return public(rec), None
+    return None, "Email or password is incorrect."
+
+
+# ---------------------------------------------------------------------------
+# Demo mode: one-click entry for the live demo, clearly labelled in the UI.
+# ---------------------------------------------------------------------------
+def demo_admin():
+    return {**public(_load()[DEMO_ADMIN["email"]]), "demo": True}
+
+
+def demo_member(row):
+    """Sign in as an existing (synthetic) cohort member, who has no password."""
+    return {"email": row["email"], "name": row["name"], "role": "member", "user_id": row["id"],
+            "organisation": row["organisation"], "gender": row["gender"],
+            "office_location": row["office_location"], "joining_month": row["joining_month"], "demo": True}
