@@ -1,5 +1,5 @@
 """
-Pre-fill data/llm_cache.json before a demo.  Run:  python -m core.warm_cache U001 U042
+Pre-fill data/llm_cache.json before a demo.  Run:  python -m core.warm_cache U001 U042 U102
 
 WHY: live Gemini calls take ~10-15s each. Warming the cache for the demo users
 means every click during the demo is instant and works even on bad Wi-Fi.
@@ -10,12 +10,14 @@ house agreement. Template fallbacks are never cached, so just re-run on failure.
 import sys
 import time
 
-from core import llm
+from core import llm, market
 from core.cluster import run_clustering
 from core.encode import load_cohort
 from core.grouping import build_all, user_deck
 
 PAUSE_S = 4
+# Groups the demo accounts create during the demo (see data/seed_market.py).
+STORY_GROUPS = {"U102": [["U102", "U082"]]}
 
 
 def warm(user_ids):
@@ -30,6 +32,10 @@ def warm(user_ids):
             continue
         jobs = [("traits", llm.extract_traits, df[df["id"] == uid].iloc[0]["free_text"])]
         deck, _ = user_deck(df, cl, res, uid)
+        # Demo story groups this user forms on stage (e.g. Arjun inviting Vamsi):
+        # same payload as the group card and the tenancy agreement, so these hit too.
+        ctx = market.make_ctx(df, cl, res)
+        deck = deck + [market.describe(ctx, members) for members in STORY_GROUPS.get(uid, [])]
         for g in deck:
             jobs += [("explain", llm.explain_group, g), ("areas", llm.suggest_areas, g),
                      ("agreement", llm.house_agreement, g)]
@@ -44,4 +50,4 @@ def warm(user_ids):
 
 
 if __name__ == "__main__":
-    warm(sys.argv[1:] or ["U001"])
+    warm(sys.argv[1:] or ["U001", "U102"])

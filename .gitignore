@@ -4,3 +4,15 @@ __pycache__/
 data/signups.csv
 data/accounts.json
 .vscode/
+# Marketplace runtime data: created by data/seed_market.py (and on first start)
+data/listings.json
+data/groups.json
+data/applications.json
+data/tenancies.json
+data/payments.json
+data/expenses.json
+data/people.json
+data/reports.json
+data/flag_actions.json
+data/member_state.json
+data/.*.tmp

@@ -22,6 +22,8 @@ def _clean(df):
     df = df.copy()
     df["dealbreakers"] = df["dealbreakers"].fillna("").astype(str)
     df["free_text"] = df["free_text"].fillna("").astype(str)
+    # "Matters a lot to me" marks (semicolon list of traits). Seed profiles have none.
+    df["priorities"] = df["priorities"].fillna("").astype(str) if "priorities" in df.columns else ""
     for t in TRAITS + ["budget_min", "budget_max", "flat_size_pref"]:
         df[t] = df[t].astype(int)
     if "_true_archetype" not in df.columns:

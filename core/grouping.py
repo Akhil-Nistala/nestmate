@@ -16,7 +16,8 @@ import itertools
 import numpy as np
 
 from core.encode import dealbreaker_list
-from core.schema import TRAITS, WEIGHTS, TRAIT_RANGE, TRAIT_SHORT, QUESTIONS, violates_dealbreaker
+from core.schema import (PRIORITY_BOOST, QUESTIONS, TRAIT_RANGE, TRAIT_SHORT, TRAITS, WEIGHTS,
+                         violates_dealbreaker)
 
 MAX_SWAP_ITERS = 200
 _W = np.array([WEIGHTS[t] for t in TRAITS])
@@ -46,7 +47,16 @@ def pair_scores(df):
     a 5-option question. WHY a 0..100 score: easy for users and HR to read."""
     X = df[TRAITS].to_numpy(dtype=float)
     diff = np.abs(X[:, None, :] - X[None, :, :]) / _RANGE        # (n, n, traits) in 0..1
-    dist = (diff * _W).sum(axis=2) / _W.sum()
+    P = priority_matrix(df)
+    if P.any():
+        # "Matters a lot to me": weight x (1 + boost x share of the pair who marked
+        # it), normalised per pair so scores stay 0..100.
+        Wp = _W * (1 + PRIORITY_BOOST * (P[:, None, :] + P[None, :, :]) / 2)
+        dist = (diff * Wp).sum(axis=2) / Wp.sum(axis=2)
+    else:
+        # Nobody marked anything (every seed profile): the original formula, so
+        # seed results stay bit-for-bit identical.
+        dist = (diff * _W).sum(axis=2) / _W.sum()
     S = 100 * (1 - dist)
 
     rows = df.to_dict("records")
@@ -59,6 +69,17 @@ def pair_scores(df):
     np.fill_diagonal(compat, False)
     S = np.where(compat, S, 0.0)
     return S, compat
+
+
+def priority_matrix(df):
+    """(n, traits) 0/1: which traits each person marked as mattering a lot."""
+    P = np.zeros((len(df), len(TRAITS)))
+    if "priorities" in df.columns:
+        for i, v in enumerate(df["priorities"].fillna("").astype(str)):
+            for t in v.split(";"):
+                if t in TRAITS:
+                    P[i, TRAITS.index(t)] = 1.0
+    return P
 
 
 def group_score(members, S):

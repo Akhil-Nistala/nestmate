@@ -134,6 +134,11 @@ def demo_admin():
     return {**public(_load()[DEMO_ADMIN["email"]]), "demo": True}
 
 
+def _seeded_people():
+    from core import store  # local import: store imports encode, which auth also uses
+    return {p["id"]: p for p in store.load("people") if p.get("seeded")}
+
+
 def demo_member(row):
     """Sign in as an existing synthetic seed member, who has no password."""
     _require_demo()
@@ -142,3 +147,26 @@ def demo_member(row):
     return {"email": row["email"], "name": row["name"], "role": "member", "user_id": row["id"],
             "organisation": row["organisation"], "gender": row["gender"],
             "office_location": row["office_location"], "joining_month": row["joining_month"], "demo": True}
+
+
+# One-tap demo accounts, each labelled by the story it shows (seeded by data/seed_market.py).
+DEMO_PERSONAS = [
+    {"id": "U102", "label": "Looking for a flat and flatmates", "who": "Arjun Gupta, with a strong match to invite"},
+    {"id": "O001", "label": "Renting out a flat", "who": "Mr. Rao, a group application is waiting"},
+    {"id": "U167", "label": "Tenant with a spare room", "who": "Rahul Patel, his landlord isn't on the app"},
+]
+
+
+def demo_persona(pid, cohort):
+    """Sign in as a seeded demo account: a synthetic cohort member or a seeded
+    landlord. Never a real sign-up."""
+    _require_demo()
+    rows = cohort[cohort["id"] == pid]
+    if pid in seed_ids() and len(rows):
+        return demo_member(rows.iloc[0].to_dict())
+    p = _seeded_people().get(pid)
+    if not p:
+        raise PermissionError("Demo mode can only sign in as seeded accounts.")
+    return {"email": p["email"], "name": p["name"], "role": "member", "user_id": p["id"],
+            "organisation": "", "gender": p.get("gender", ""), "office_location": None, "joining_month": None,
+            "demo": True}

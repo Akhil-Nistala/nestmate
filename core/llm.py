@@ -20,7 +20,7 @@ import warnings
 
 from dotenv import load_dotenv
 
-from core.schema import TRAITS, QUESTIONS, TRAIT_RANGE
+from core.schema import AREAS, TRAITS, QUESTIONS, TRAIT_RANGE
 
 load_dotenv()
 CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "llm_cache.json")
@@ -280,17 +280,7 @@ def house_agreement(g):
 # ---------------------------------------------------------------------------
 # 4. Area suggestions (pure Python; LLM only writes a one-line summary)
 # ---------------------------------------------------------------------------
-# Approximate rent per person (shared 2-3BHK) and commute minutes to each office.
-AREAS = [
-    {"area": "Gachibowli",      "rent": 14000, "commute": {"Gachibowli": 10, "Madhapur": 25, "Kondapur": 20, "Hitec City": 20}},
-    {"area": "Madhapur",        "rent": 15000, "commute": {"Gachibowli": 25, "Madhapur": 10, "Kondapur": 15, "Hitec City": 10}},
-    {"area": "Kondapur",        "rent": 12000, "commute": {"Gachibowli": 20, "Madhapur": 15, "Kondapur": 10, "Hitec City": 15}},
-    {"area": "Kothaguda",       "rent": 11000, "commute": {"Gachibowli": 15, "Madhapur": 15, "Kondapur": 10, "Hitec City": 15}},
-    {"area": "Nanakramguda",    "rent": 13000, "commute": {"Gachibowli": 10, "Madhapur": 30, "Kondapur": 25, "Hitec City": 25}},
-    {"area": "Manikonda",       "rent": 9000,  "commute": {"Gachibowli": 20, "Madhapur": 35, "Kondapur": 30, "Hitec City": 30}},
-    {"area": "Serilingampally", "rent": 8500,  "commute": {"Gachibowli": 20, "Madhapur": 30, "Kondapur": 20, "Hitec City": 25}},
-    {"area": "Miyapur",         "rent": 7500,  "commute": {"Gachibowli": 35, "Madhapur": 35, "Kondapur": 25, "Hitec City": 30}},
-]
+# The rent/commute table lives in core/schema.py (also used by listings).
 
 
 def suggest_areas(g):
