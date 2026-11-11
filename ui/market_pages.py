@@ -14,7 +14,7 @@ import streamlit as st
 from core import actions, market, store
 from core.schema import AREAS, LISTER_TYPES, LISTING_GENDER, LISTING_KINDS, TRAIT_SHORT, VISIT_SLOTS
 from ui import nav, session
-from ui.components import (lc, avatar, chip, empty, engine, esc, first, habit_grid, join_and, key_tag, md, money,
+from ui.components import (avatar, chip, empty, engine, esc, first, habit_grid, join_and, key_tag, md, money,
                            month_name, page_head, people_row, src_tag, stats)
 from ui.member_pages import group_card, group_sentence, me_id, my_profile, need_quiz
 
@@ -59,7 +59,7 @@ def free_chip(li):
 # ---------------------------------------------------------------------------
 # Explore
 # ---------------------------------------------------------------------------
-MODES = {"both": "Flats and people", "flat": "Flats and rooms", "people": "Flatmates",
+MODES = {"both": "Flats with people from your batch", "flat": "Flats and rooms", "people": "Flatmates",
          "group": "Flats for your group"}
 
 
@@ -81,19 +81,19 @@ def _result_card(r, uid, names, ctx, show_interest):
         if low and low[2]:
             t, mine, theirs = low[2]
             extra += (f"<p class='warnline'>You and {esc(first(names(low[0])))} differ on {TRAIT_SHORT[t]}: "
-                      f"you said {esc(lc(mine))}, {esc(first(names(low[0])))} said {esc(lc(theirs))}.</p>")
+                      f"you said {esc(mine.lower())}, {esc(first(names(low[0])))} said {esc(theirs.lower())}.</p>")
     if show_interest and r["interested"]:
         n = len(r["interested"])
         faces = "".join(f"<span class='face'>{avatar(names(p))}<span>{esc(first(names(p)))}"
                         f"{f' <b>{s:.0f}%</b>' if s is not None else ''}</span></span>"
                         for p, s in r["interested"][:4])
-        extra += (f"<p class='card-p strong'>{n} {'person' if n == 1 else 'people'} "
+        extra += (f"<p class='card-p strong'>{n} {'person' if n == 1 else 'people'} from your batch "
                   f"{'is' if n == 1 else 'are'} interested</p><div class='faces'>{faces}</div>")
     with st.container(key=f"res-{li['id']}"):
         md(f"""<div class='card-head'><div class='ch-main'>
               <h2 class='card-h'>{listing_title(li)} {free_chip(li)}</h2>
               <p class='card-p'>{lines}</p>{extra}</div>
-              {key_tag(r['score'], title=basis)}</div>""")
+              {key_tag(r['score'], title=basis)}</div><p class='fine'>{basis}.</p>""")
         st.button("Open this flat", key=f"open-{li['id']}", on_click=_open, args=(li["id"],))
 
 
@@ -102,16 +102,16 @@ def _people_mode(ctx, uid, names):
     if not people:
         empty("Nobody fits your dealbreakers yet", "Try a wider budget or fewer dealbreakers in Your answers.")
         return
-    md("<p class='lede'>The people you'd get on with best. Invite one to start a group, "
-       "or accept people one at a time in Flatmates.</p>")
-    if st.button("See flatmates", type="primary"):
+    md("<p class='lede'>The people in your batch you'd get on with best. Invite one to start a group, "
+       "or see whole flat groups we've put together.</p>")
+    if st.button("See flat groups", type="primary"):
         nav.go("matches")
     me = market.person(ctx, uid)
     for pid, score in people:
         p = market.person(ctx, pid)
         diff = market.biggest_difference(ctx, uid, pid)
-        note = (f"Biggest difference: {TRAIT_SHORT[diff[0]]}, you said {esc(lc(diff[1]))}, "
-                f"{esc(first(p['name']))} said {esc(lc(diff[2]))}." if diff else "You answered everything the same.")
+        note = (f"Biggest difference: {TRAIT_SHORT[diff[0]]}, you said {esc(diff[1].lower())}, "
+                f"{esc(first(p['name']))} said {esc(diff[2].lower())}." if diff else "You answered everything the same.")
         with st.container(key=f"person-{pid}"):
             md(f"""<div class='card-head'><div class='ch-main'>
                   <h2 class='card-h'>{esc(p['name'])}</h2>
@@ -128,7 +128,7 @@ def _people_mode(ctx, uid, names):
 def _group_mode(ctx, uid, names, listings):
     g = actions.my_group(uid)
     if not g:
-        empty("You don't have a group yet", "Accept people in Flatmates, or invite someone from a flat, then come back here.")
+        empty("You don't have a group yet", "Accept a flat group or invite someone from a flat, then come back here.")
         return
     results = market.group_results(ctx, g["member_ids"], listings)
     lo, hi = market.shared_budget(ctx, g["member_ids"])
@@ -147,7 +147,8 @@ def _group_mode(ctx, uid, names, listings):
                   <h2 class='card-h'>{listing_title(li)} {free_chip(li)}</h2>
                   <p class='card-p'>Rooms {rooms}. {money(r['rent_total'])} a month for the group, about
                   {r['minutes']} min average commute. {rules_sentence(li)}</p></div>
-                  {key_tag(r['score'], title='Group fit of ' + who)}</div>""")
+                  {key_tag(r['score'], title='Group fit of ' + who)}</div>
+                  <p class='fine'>Group fit of {who}.</p>""")
             with st.container(horizontal=True, gap="small"):
                 st.button("Open this flat", key=f"gopen-{li['id']}", on_click=_open, args=(li["id"],))
                 if li["id"] in g["shortlist"]:
@@ -177,7 +178,7 @@ def explore_page():
     state = session.state()["explore"]
     if state.get("open"):
         return listing_detail(state["open"], uid, names, ctx, cohort)
-    page_head("Explore", "Ranked by how well they fit you.")
+    page_head("Explore", "Flats, rooms and people from your batch, ranked by how well they fit you.")
     if me is None:
         need_quiz("Explore")
         return
@@ -198,7 +199,7 @@ def explore_page():
         f = _flat_filters(me)
         results = market.flat_results(ctx, uid, listings, **f)
     else:
-        md("<p class='lede'>Flats with free rooms, and who else is interested in each. "
+        md("<p class='lede'>Flats with free rooms, and who from your batch is interested in each. "
            "Open one to invite them and apply together.</p>")
         results = [r for r in market.flat_results(ctx, uid, listings) if r["listing"]["kind"] == "room"
                    or len(market.free_rooms(r["listing"])) >= 2]
@@ -260,8 +261,8 @@ def listing_detail(lid, uid, names, ctx, cohort):
             low = rf["lowest"]
             if low and low[2]:
                 t, mine, theirs = low[2]
-                st.warning(f"You and {first(names(low[0]))} differ on {TRAIT_SHORT[t]}: you said {lc(mine)}, "
-                           f"{first(names(low[0]))} said {lc(theirs)}. Worth talking about before you move in.",
+                st.warning(f"You and {first(names(low[0]))} differ on {TRAIT_SHORT[t]}: you said {mine.lower()}, "
+                           f"{first(names(low[0]))} said {theirs.lower()}. Worth talking about before you move in.",
                            icon=":material/info:")
         elif any(not market.in_cohort(ctx, o) for o in market.residents(li)):
             md("<p class='fine'>The owner lives here too. They haven't answered the lifestyle questions.</p>")
@@ -269,7 +270,7 @@ def listing_detail(lid, uid, names, ctx, cohort):
         g = actions.my_group(uid)
         interested = market.interested_people(ctx, uid, li)
         with st.container(key="interest-panel"):
-            md(f"<h3 class='panel-h'>Also interested</h3>"
+            md(f"<h3 class='panel-h'>Interested from your batch</h3>"
                f"<p class='fine'>{len(interested)} {'person' if len(interested) == 1 else 'people'} "
                f"who fit your dealbreakers. Invite someone to apply for this flat together.</p>")
             for pid, s in interested:
@@ -363,10 +364,10 @@ def group_page():
     g = actions.my_group(uid)
     if not g:
         page_head("My group")
-        empty("No group yet", "Accept people in Flatmates, or invite someone from a flat in Explore. "
+        empty("No group yet", "Accept one of your suggested flat groups, or invite someone from a flat in Explore. "
               "Your group, its flats and your house agreement will appear here.")
         with st.container(horizontal=True, gap="small"):
-            if st.button("See flatmates", type="primary"):
+            if st.button("See flat groups", type="primary"):
                 nav.go("matches")
             if st.button("Explore flats"):
                 nav.go("explore")

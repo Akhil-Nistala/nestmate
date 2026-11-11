@@ -210,23 +210,6 @@ def people_results(ctx, me, limit=12):
     return [(ids[j], float(ctx["S"][i, j])) for j in order]
 
 
-def people_for_group(ctx, member_ids, exclude=(), limit=40):
-    """Next people to suggest, one at a time: compatible with EVERYONE already in
-    the group (hard rules), ranked by their average pair score with the group.
-    Returns [(id, score)]."""
-    idx = [ctx["pos"][m] for m in member_ids if in_cohort(ctx, m)]
-    if not idx:
-        return []
-    ids = list(ctx["df"]["id"])
-    skip = set(exclude) | set(member_ids)
-    out = []
-    for j, pid in enumerate(ids):
-        if pid in skip or not all(ctx["compat"][j, i] for i in idx):
-            continue
-        out.append((pid, float(np.mean([ctx["S"][j, i] for i in idx]))))
-    return sorted(out, key=lambda x: (-x[1], x[0]))[:limit]
-
-
 # ---------------------------------------------------------------------------
 # Group <-> listing
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ from ui.theme import PERSONA_COLORS, mode, style_fig, tok
 def _require_admin():
     acc = session.account()
     if not acc or acc.get("role") != "admin":
-        st.error("This page is for admins only.")
+        st.error("This page is for HR admins only.")
         st.stop()
 
 
@@ -81,7 +81,7 @@ def overview_page():
     ids, groups, unmatched, placed = _org_view(mine, res)
     counts = cl["points"][cl["points"]["id"].isin(ids)]["persona"].value_counts()
     stats([("Joiners", len(mine), f"from {esc(org)}"),
-           ("Lifestyle personas", len(counts), f"of {len(cl['personas'])} in the whole cohort"),
+           ("Lifestyle personas", len(counts), f"of {len(cl['personas'])} across the partner cohort"),
            ("Flat groups", len(groups), f"average fit {sum(g['score'] for g in groups) / max(1, len(groups)):.0f}%"),
            ("Placed", f"{placed / len(mine):.0%}", f"{len(unmatched)} need follow-up")])
 
@@ -131,7 +131,7 @@ def overview_page():
         fig.update_yaxes(title=None, showgrid=False)
         st.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": False})
     with right, st.container(key="chart-k"):
-        section("How many personas?", "Silhouette score for each number of clusters, across the whole cohort. "
+        section("How many personas?", "Silhouette score for each number of clusters, across the partner cohort. "
                                       "The highest wins.")
         s = pd.DataFrame({"k": list(cl["silhouette_scores"]), "score": list(cl["silhouette_scores"].values())})
         fig = px.line(s, x="k", y="score", markers=True)
@@ -243,7 +243,7 @@ def people_page():
 def model_page():
     _require_admin()
     cohort = load_cohort()
-    page_head("Model checks", "How much to trust the personas and groups, measured on the whole cohort.")
+    page_head("Model checks", "How much to trust the personas and groups, measured on the whole partner cohort.")
     md("<div class='panel'><h3 class='panel-h'>What these mean</h3><p class='fine'>"
        "<b>ARI</b> compares our clusters with the hidden synthetic archetypes (1 = perfect, 0 = random). "
        "<b>Stability</b> re-runs the pipeline and checks it agrees with itself. The <b>random baseline</b> "

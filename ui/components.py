@@ -79,11 +79,6 @@ def month_name(ym):
     return f"{MONTHS[int(m) - 1]} {y}"
 
 
-def lc(text):
-    """Lower-case an answer for use mid-sentence, but keep 'I' as 'I'."""
-    return text if text.startswith(("I ", "I'")) else text[:1].lower() + text[1:]
-
-
 def money(n):
     return f"₹{int(n):,}"
 

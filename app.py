@@ -1,5 +1,5 @@
 """
-Nestmate: find flatmates you'll actually get on with, and the flat to go with them.
+Nestmate: know who you're living with before you land in Hyderabad.
 Run:  streamlit run app.py
 
 This file is only the router. WHY role-based routes with st.navigation:
@@ -56,7 +56,7 @@ def build_pages():
     default = "home" if has_profile or owns or rents else "onboarding"
     spec = [("home", member_pages.home_page, "Home"),
             ("explore", market_pages.explore_page, "Explore"),
-            ("matches", member_pages.matches_page, "Flatmates"),
+            ("matches", member_pages.matches_page, "Flat groups"),
             ("group", market_pages.group_page, "My group"),
             ("listings", market_pages.listings_page, "My listings"),
             ("rent", market_pages.rent_page, "Rent"),
@@ -93,7 +93,7 @@ def _toggle_theme():
 with st.container(key="topbar", horizontal=True, vertical_alignment="center", gap="medium"):
     is_admin = acc is not None and acc["role"] == "admin"
     st.html("<div class='brand'><span class='logo' aria-hidden='true'></span><span class='wordmark'>nestmate</span>"
-            f"{'<span class=console>Admin</span>' if is_admin else ''}</div>", width="content")
+            f"{'<span class=console>HR console</span>' if is_admin else ''}</div>", width="content")
     if acc is not None and len(shown) > 1:
         with st.container(key="nav", horizontal=True, gap=None, width="content"):
             for key in shown:
@@ -110,7 +110,7 @@ with st.container(key="topbar", horizontal=True, vertical_alignment="center", ga
                   on_click=_toggle_theme)
         if acc is not None:
             with st.popover(acc["name"].split()[0], icon=":material/account_circle:", key="account"):
-                role = "Admin" if acc["role"] == "admin" else "Member"
+                role = "HR admin" if acc["role"] == "admin" else "Member"
                 org = acc.get("organisation") or ("Property owner" if acc["user_id"].startswith("O") else "")
                 st.html(f"<div class='acct'><span class='avatar me'>{esc(initials(acc['name']))}</span><div>"
                         f"<div class='n'>{esc(acc['name'])}</div><div class='m'>{esc(acc['email'])}</div>"
