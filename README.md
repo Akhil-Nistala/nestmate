@@ -91,7 +91,7 @@ core/encode.py      load/save cohort, profile -> matrix
 core/cluster.py     scaling, KMeans, silhouette, PCA, persona names
 core/grouping.py    compatibility, group formation, swap pass
 core/llm.py         Gemini calls + cache + template fallbacks
-core/evaluate.py    ARI vs hidden archetypes, rule checks, determinism, random baseline
+core/evaluate.py    ARI vs hidden archetypes, rule checks, determinism, rule-respecting random baseline
 ```
 
 ## Honest limitations

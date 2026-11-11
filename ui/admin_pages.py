@@ -241,7 +241,9 @@ def model_page():
     md("<div class='panel'><div class='label'>What these mean</div><p class='fine' style='margin:0'>"
        "<b>ARI</b> compares our clusters with the hidden synthetic archetypes (1 = perfect, 0 = random). "
        "<b>Stability</b> re-runs the pipeline and checks it agrees with itself. The <b>random baseline</b> "
-       "uses the same group sizes with random people, so the gap shows what matching adds.</p></div>")
+       "builds random flats of the same sizes that still obey every hard rule (budget, dealbreakers, gender), "
+       "averaged over 20 shuffles, so the gap to the mean group score is what lifestyle matching adds. "
+       "<b>Random ignoring rules</b> is shown for reference only.</p></div>")
     if st.button("Run checks", type="primary", icon=":material/play_arrow:"):
         with st.spinner("Re-running the pipeline twice…"):
             st.dataframe(pd.DataFrame(cached_eval(cohort).items(), columns=["Check", "Value"]).astype(str),
