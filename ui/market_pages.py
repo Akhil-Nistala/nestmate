@@ -14,7 +14,7 @@ import streamlit as st
 from core import actions, market, store
 from core.schema import AREAS, LISTER_TYPES, LISTING_GENDER, LISTING_KINDS, TRAIT_SHORT, VISIT_SLOTS
 from ui import nav, session
-from ui.components import (avatar, chip, empty, engine, esc, first, habit_grid, join_and, key_tag, md, money,
+from ui.components import (lc, avatar, chip, empty, engine, esc, first, habit_grid, join_and, key_tag, md, money,
                            month_name, page_head, people_row, src_tag, stats)
 from ui.member_pages import group_card, group_sentence, me_id, my_profile, need_quiz
 
@@ -70,7 +70,8 @@ def _open(lid):
 def _result_card(r, uid, names, ctx, show_interest):
     li = r["listing"]
     rf = r["room_fit"]
-    basis = "Fit with the people living there" if r["basis"] == "people" else "Rent and commute fit"
+    basis = "Fit with the people living there"
+    tag = key_tag(r["score"], title=basis) if rf else chip(*r["label"])
     office = (market.person(ctx, uid) or {}).get("office_location", "")
     lines = f"Rooms from {money(r['rent'])} each, {r['minutes']} min to your office in {esc(office)}. {rules_sentence(li)}"
     extra = ""
@@ -81,7 +82,7 @@ def _result_card(r, uid, names, ctx, show_interest):
         if low and low[2]:
             t, mine, theirs = low[2]
             extra += (f"<p class='warnline'>You and {esc(first(names(low[0])))} differ on {TRAIT_SHORT[t]}: "
-                      f"you said {esc(mine.lower())}, {esc(first(names(low[0])))} said {esc(theirs.lower())}.</p>")
+                      f"you said {esc(lc(mine))}, {esc(first(names(low[0])))} said {esc(lc(theirs))}.</p>")
     if show_interest and r["interested"]:
         n = len(r["interested"])
         faces = "".join(f"<span class='face'>{avatar(names(p))}<span>{esc(first(names(p)))}"
@@ -93,7 +94,7 @@ def _result_card(r, uid, names, ctx, show_interest):
         md(f"""<div class='card-head'><div class='ch-main'>
               <h2 class='card-h'>{listing_title(li)} {free_chip(li)}</h2>
               <p class='card-p'>{lines}</p>{extra}</div>
-              {key_tag(r['score'], title=basis)}</div><p class='fine'>{basis}.</p>""")
+              {tag}</div>""")
         st.button("Open this flat", key=f"open-{li['id']}", on_click=_open, args=(li["id"],))
 
 
@@ -109,8 +110,8 @@ def _people_mode(ctx, uid, names):
     for pid, score in people:
         p = market.person(ctx, pid)
         diff = market.biggest_difference(ctx, uid, pid)
-        note = (f"Biggest difference: {TRAIT_SHORT[diff[0]]}, you said {esc(diff[1].lower())}, "
-                f"{esc(first(p['name']))} said {esc(diff[2].lower())}." if diff else "You answered everything the same.")
+        note = (f"Biggest difference: {TRAIT_SHORT[diff[0]]}, you said {esc(lc(diff[1]))}, "
+                f"{esc(first(p['name']))} said {esc(lc(diff[2]))}." if diff else "You answered everything the same.")
         with st.container(key=f"person-{pid}"):
             md(f"""<div class='card-head'><div class='ch-main'>
                   <h2 class='card-h'>{esc(p['name'])}</h2>
@@ -195,7 +196,7 @@ def explore_page():
         results = market.flat_results(ctx, uid, listings, **f)
     else:
         md("<p class='lede'>Flats with free rooms, and who else is interested in each.</p>")
-        results = [r for r in market.flat_results(ctx, uid, listings) if r["listing"]["kind"] == "room"
+        results = [r for r in market.flat_results(ctx, uid, listings, rank="people") if r["listing"]["kind"] == "room"
                    or len(market.free_rooms(r["listing"])) >= 2]
     if not results:
         empty("No flats match", "Widen the budget or commute, or pick more areas.")
@@ -220,13 +221,14 @@ def listing_detail(lid, uid, names, ctx, cohort):
     free = market.free_rooms(li)
     me = market.person(ctx, uid)
     minutes = market.commute(li["area"], me["office_location"]) if me else None
-    score = rf["score"] if rf else (market.practical_fit(min(r["rent"] for r in free), me["budget_min"],
-                                                         me["budget_max"], minutes) if me and free else None)
+    score = rf["score"] if rf else None
+    label = (market.practical_label(min(r["rent"] for r in free), me["budget_min"], me["budget_max"], minutes)
+             if me and free and not rf else None)
     md(f"""<div class='card-head'><div class='ch-main'>
           <h1 class='display sm'>{listing_title(li)}</h1>
           <p class='card-p'>{esc(li['address_hint'])}. {lister_sentence(li, names)}
           {f'{minutes} min to your office.' if minutes else ''}</p></div>
-          {key_tag(score, title='Fit with the people living there' if rf else 'Rent and commute fit')}</div>""")
+          {key_tag(score, title='Fit with the people living there') if rf else (chip(*label) if label else '')}</div>""")
     left, right = st.columns([3, 2], gap="large")
     with left:
         rows = ""
@@ -250,8 +252,8 @@ def listing_detail(lid, uid, names, ctx, cohort):
             low = rf["lowest"]
             if low and low[2]:
                 t, mine, theirs = low[2]
-                st.warning(f"You and {first(names(low[0]))} differ on {TRAIT_SHORT[t]}: you said {mine.lower()}, "
-                           f"{first(names(low[0]))} said {theirs.lower()}. Worth talking about before you move in.",
+                st.warning(f"You and {first(names(low[0]))} differ on {TRAIT_SHORT[t]}: you said {lc(mine)}, "
+                           f"{first(names(low[0]))} said {lc(theirs)}. Worth talking about before you move in.",
                            icon=":material/info:")
         elif any(not market.in_cohort(ctx, o) for o in market.residents(li)):
             md("<p class='fine'>The owner lives here too. They haven't answered the lifestyle questions.</p>")
@@ -511,7 +513,8 @@ def _application_card(a, li, ctx, names, uid):
         f"applying for room {a['room_ids'][0]}"
     status = {"sent": ("New", "warn"), "visit_booked": (f"Visit {esc(a.get('visit_slot') or '')}", ""),
               "accepted": ("Accepted", "ok"), "rejected": ("Declined", "")}[a["status"]]
-    basis = {"group": "Fit of everyone who'd live there", "practical": "Rent and commute fit", None: ""}[view["basis"]]
+    basis = {"group": "Fit of everyone who'd live there", "practical": "", None: ""}[view["basis"]]
+    tag = chip(*view["label"]) if view["basis"] == "practical" else key_tag(view["score"], title=basis)
     reasons = "".join(f"<li>{esc(r)}</li>" for r in view["reasons"])
     clash = f"<p class='warnline'>One to talk about: {esc(view['clash'])}.</p>" if view["clash"] else ""
     with st.container(key=f"app-{a['id']}"):
@@ -519,7 +522,7 @@ def _application_card(a, li, ctx, names, uid):
               <h3 class='card-h'>{who} {chip(status[0], status[1])}</h3>
               <p class='card-p'>{kind.capitalize()}.</p>
               <ul class='reasons'>{reasons}</ul>{clash}</div>
-              {key_tag(view['score'], title=basis)}</div>""")
+              {tag}</div>""")
         known = [market.person(ctx, m) for m in dict.fromkeys(members + market.residents(li))
                  if market.in_cohort(ctx, m)]
         if len(known) >= 2:
@@ -584,7 +587,7 @@ def listings_page():
             md(f"<div class='grid-wrap'><table class='list'><thead><tr><th>Room</th><th class='num'>Rent</th>"
                f"<th>Who's there</th></tr></thead><tbody>{rows}</tbody></table></div>")
         order = sorted(mine_apps, key=lambda a: (a["status"] not in ("sent", "visit_booked"),
-                                                 -(market.applicant_view(ctx, li, actions.applicants_of(a))["score"] or 0)))
+                                                 -(lambda v: v["score"] or v.get("rank") or 0)(market.applicant_view(ctx, li, actions.applicants_of(a)))))
         if order:
             md(f"<h3 class='sec-h small'>Applicants for {li['id']}, best fit first</h3>")
         for a in order:

@@ -21,8 +21,8 @@ from collections import defaultdict
 import numpy as np
 
 from core.grouping import conflict_reason, describe_group, group_score
-from core.schema import (AREAS, MAX_ACTIVE_LISTINGS, QUESTION_UI, SCAM_DISCOUNT, TRAIT_RANGE, TRAIT_SHORT, TRAITS,
-                         WEIGHTS)
+from core.schema import (AREAS, MAX_ACTIVE_LISTINGS, MIN_SHOWN_FIT, QUESTION_UI, SCAM_DISCOUNT, TRAIT_RANGE,
+                         TRAIT_SHORT, TRAITS, WEIGHTS)
 
 AREA = {a["area"]: a for a in AREAS}
 _W = np.array([WEIGHTS[t] for t in TRAITS])
@@ -124,6 +124,16 @@ def listing_blocks(listing, p):
     return None
 
 
+def practical_label(rent, lo, hi, minutes):
+    """Plain words for rent and commute, used instead of a % when no people are
+    involved (a "100% fit" for an empty flat would overstate what we know)."""
+    if rent > hi:
+        return f"Over your budget by ₹{rent - hi:,}", "warn"
+    if minutes is None or minutes <= 20:
+        return "Fits your budget and commute", "ok"
+    return f"Fits your budget, {minutes} min commute", ""
+
+
 def practical_fit(rent, lo, hi, minutes):
     """0..100 from rent vs budget (60%) and commute (40%).
     Rent inside or under the budget is a full fit; 25% over budget is zero.
@@ -160,14 +170,18 @@ def interested_people(ctx, me, listing):
         if pid == me or not in_cohort(ctx, pid):
             continue
         s, ok = pair(ctx, me, pid)
-        if s is None or ok:
+        if s is None or (ok and s >= MIN_SHOWN_FIT):
             out.append((pid, s))
     return sorted(out, key=lambda x: (-(x[1] or 0), x[0]))
 
 
-def flat_results(ctx, me, listings, budget=None, areas=None, kind=None, max_commute=None, office=None):
+def flat_results(ctx, me, listings, budget=None, areas=None, kind=None, max_commute=None, office=None,
+                 rank="practical"):
     """Live listings with a free room that `me` may live in, filtered and ranked.
-    me: member id (may be outside the cohort; then no people scores)."""
+    me: member id (may be outside the cohort; then no people scores).
+    rank="people": flats where you'd fit the people involved come first (fit
+    with residents, or your best match among those interested), then rent and
+    commute. rank="practical": rent and commute first."""
     p = person(ctx, me) or {}
     office = office or p.get("office_location")
     lo, hi = budget or (p.get("budget_min", 0), p.get("budget_max", 10 ** 9))
@@ -192,11 +206,20 @@ def flat_results(ctx, me, listings, budget=None, areas=None, kind=None, max_comm
         if max_commute and minutes is not None and minutes > max_commute:
             continue
         practical = practical_fit(rent, lo, hi, minutes)
+        interested = interested_people(ctx, me, li)
+        best_interested = max((s for _, s in interested if s is not None), default=None)
         out.append({"listing": li, "rent": rent, "minutes": minutes, "practical": practical,
-                    "room_fit": rf, "score": rf["score"] if rf else practical,
-                    "basis": "people" if rf else "practical",
-                    "interested": interested_people(ctx, me, li)})
-    return sorted(out, key=lambda r: (-r["score"], r["rent"], r["listing"]["id"]))
+                    "label": practical_label(rent, lo, hi, minutes),
+                    "room_fit": rf, "score": rf["score"] if rf else None,
+                    "people_score": rf["score"] if rf else best_interested,
+                    "basis": "people" if rf else "practical", "interested": interested})
+    if rank == "people":
+        # Ties (same whole-number fit) go to the flat with more free rooms: room for people to move in together.
+        key = lambda r: (-round(r["people_score"] or -1), -len(free_rooms(r["listing"])), -r["practical"],  # noqa: E731
+                         r["rent"], r["listing"]["id"])
+    else:
+        key = lambda r: (-r["practical"], -(r["people_score"] or -1), r["rent"], r["listing"]["id"])  # noqa: E731
+    return sorted(out, key=key)
 
 
 def people_results(ctx, me, limit=12):
@@ -288,8 +311,9 @@ def applicant_view(ctx, listing, member_ids):
     rent = min((r["rent"] for r in free_rooms(listing)), default=0)
     minutes = commute(listing["area"], p["office_location"])
     reasons = [f"Budget ₹{p['budget_min']:,}–{p['budget_max']:,}", f"{minutes} min to their office"]
-    return {"score": practical_fit(rent, p["budget_min"], p["budget_max"], minutes), "basis": "practical",
-            "reasons": reasons, "clash": None}
+    return {"score": None, "rank": practical_fit(rent, p["budget_min"], p["budget_max"], minutes),
+            "basis": "practical", "reasons": reasons, "clash": None,
+            "label": practical_label(rent, p["budget_min"], p["budget_max"], minutes)}
 
 
 # ---------------------------------------------------------------------------

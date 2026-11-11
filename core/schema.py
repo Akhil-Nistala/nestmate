@@ -266,6 +266,7 @@ LISTER_TYPES = {"owner_away": "I own it and don't live there",
                 "tenant_spare_room": "I rent it and have a spare room"}
 LISTING_GENDER = {"any": "Anyone", "male": "Men only", "female": "Women only"}
 SCAM_DISCOUNT = 0.40       # flag rent more than 40% below the area average
+MIN_SHOWN_FIT = 50         # interested people below this fit aren't shown (weak matches add noise)
 MAX_ACTIVE_LISTINGS = 2    # flag an account with more listings than this, in different flats
 # Fixed visit slots (deterministic: no clock at render time).
 VISIT_SLOTS = ["Sat 12 Jun, 11:00", "Sat 12 Jun, 17:00", "Sun 13 Jun, 11:00", "Sun 13 Jun, 17:00",
