@@ -3,3 +3,4 @@
 __pycache__/
 data/signups.csv
 data/accounts.json
+.vscode/
