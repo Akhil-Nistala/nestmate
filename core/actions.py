@@ -6,7 +6,7 @@ No Streamlit here: pages call these and re-render. Fit numbers come from
 core/market.py; storage from core/store.py.
 
 What is SIMULATED for the demo (and labelled so in the UI):
-  - other members accepting a group invite (marked accepted straight away)
+  - other members accepting a group (marked accepted straight away)
   - signing the house agreement (a button per member, no e-signature)
   - payments (mock checkout; no money moves; a receipt number is issued)
 """
@@ -87,26 +87,6 @@ def create_group(creator, member_ids, target_size, anchored_listing_id=None):
         out.update(g)
     store.mutate("groups", fn)
     return out
-
-
-def invite_to_listing(me, invitee, listing_id):
-    """Invite someone to move into a flat with you. Adds them to your group for
-    that flat if you already have one, otherwise starts a group anchored to it."""
-    g = my_group(me)
-    if g and g["status"] == "forming" and g.get("anchored_listing_id") == listing_id:
-        if invitee in g["member_ids"]:
-            return g
-
-        def fn(rows):
-            _leave_forming([r for r in rows if r["id"] != g["id"]], invitee)
-            for r in rows:
-                if r["id"] == g["id"]:
-                    r["member_ids"].append(invitee)
-                    r["accepted"].append(invitee)
-                    r["target_size"] = max(r["target_size"], len(r["member_ids"]))
-        store.mutate("groups", fn)
-        return store.get("groups", g["id"])
-    return create_group(me, [invitee], 2, anchored_listing_id=listing_id)
 
 
 def leave_group(mid, group_id):

@@ -46,8 +46,7 @@ template, and the UI says "Written by AI" or "From a template" next to the text.
 LLM answers are cached in `data/llm_cache.json`, so repeat clicks are instant and free.
 
 **Before the demo, warm the cache** for the users you'll show:
-`python -m core.warm_cache U001 U042 U102` (about 10 calls per user; U102 also warms
-Arjun's invite group and its house agreement). Live Gemini calls take 3–13 s and the
+`python -m core.warm_cache U001 U042 U102` (about 10 calls per user). Live Gemini calls take 3–13 s and the
 free tier allows only ~20 requests/day per model, so cached answers make the demo
 instant and quota-proof. Model: `gemini-3.5-flash-lite` (set in `.env`). U001 is fully
 cached today; U042 and U102 are not yet.
@@ -64,7 +63,7 @@ Seed profiles (`data/profiles.csv`) and the LLM cache are never modified by a re
 ## Demo accounts (login page, demo mode only)
 | Button | Account | Story |
 |---|---|---|
-| Looking for a flat and flatmates | Arjun Gupta (U102), quiz done | Explore, open Mr. Rao's flat in Gachibowli, invite Vamsi (91% fit), apply as a group. After Mr. Rao accepts: pay rent in the mock checkout, add a shared bill. Rahul's spare room shows "You'd live with Rahul". |
+| Looking for a flat and flatmates | Arjun Gupta (U102), quiz done | Flat groups: accept or pass on each person (a pass swaps in the next best fit), then Accept group. In My group, Find flats for us, shortlist Mr. Rao's flat in Gachibowli, apply as a group. After Mr. Rao accepts: pay rent in the mock checkout, add a shared bill. Rahul's spare room shows "You'd live with Rahul". |
 | Renting out a flat | Mr. Rao (O001), landlord, no quiz | My listings: a 3BHK let as rooms, one group application already waiting. Book a visit, accept Arjun's group, see the house agreement and rent collection. |
 | Tenant with a spare room | Rahul Patel (U167) | Listed his spare room in Madhapur; his landlord isn't on the app, so rent goes to the landlord's UPI ID. |
 | HR admin | Priya Nair, hr@deloitte.com / nestmate-hr | Cohort overview, flat groups, people, listings to review (approve L008), flags (a listing 50% below the area average, an account with three listings, a user report), model checks. |
@@ -82,8 +81,8 @@ and one account can search and list.
 |---|---|---|
 | Logged out | `/login`, `/signup` | Log in, sign up, demo accounts |
 | Member | `/home` | Four options (find a flat, find flatmates, both, list a space) and "continue where you left off" |
-| | `/explore` | Flats with people from your batch, flats and rooms (filters), flatmates, or flats for your group; each with a fit score |
-| | `/matches` (Flat groups) | The group deck: accept or pass on whole groups |
+| | `/explore` | Flats and who else is interested, flats and rooms (filters), flatmates, or flats for your group; each with a fit score |
+| | `/matches` (Flat groups) | The group deck: accept or pass on each person, or on the whole group |
 | | `/group` (My group) | Members, combined budget, shortlisted flats, apply as a group, house agreement once housed |
 | | `/listings` (My listings) | List a space; your listings and their applicants, best fit first; book visits; accept |
 | | `/rent` | Your share, who has paid, mock checkout, shared bills; or rent collection as a lister |
@@ -103,7 +102,7 @@ refresh via a random session-id cookie.
 **Light / dark mode** follows the system setting; the sun/moon button switches it.
 
 ## What's simulated
-- **Other members accepting** a group or an invite: marked accepted straight away, and labelled.
+- **Other members accepting** a group: marked accepted straight away, and labelled.
 - **Signing** the house agreement: a Sign button per member, no e-signature.
 - **Payments**: the checkout says "Demo payment, no money moves" and issues a receipt number.
 - **Email verification** by one-time code: the partner-domain check stands in for it.

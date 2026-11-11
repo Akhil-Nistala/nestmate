@@ -151,7 +151,7 @@ def demo_member(row):
 
 # One-tap demo accounts, each labelled by the story it shows (seeded by data/seed_market.py).
 DEMO_PERSONAS = [
-    {"id": "U102", "label": "Looking for a flat and flatmates", "who": "Arjun Gupta, with a strong match to invite"},
+    {"id": "U102", "label": "Looking for a flat and flatmates", "who": "Arjun Gupta, lifestyle quiz done"},
     {"id": "O001", "label": "Renting out a flat", "who": "Mr. Rao, a group application is waiting"},
     {"id": "U167", "label": "Tenant with a spare room", "who": "Rahul Patel, his landlord isn't on the app"},
 ]

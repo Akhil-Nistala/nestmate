@@ -282,7 +282,7 @@ def matches_page():
         return
     persona = cl["points"].set_index("id").loc[me["id"], "persona"]
     page_head("Flat groups for you",
-              f"Whole flats of people from your batch, not single profiles. You're in the "
+              f"Whole flats of people joining when you do, not single profiles. You're in the "
               f"{esc(persona_label(persona).lower())} group of the cohort.")
     from core.grouping import user_deck
     deck, placed = user_deck(cohort, cl, res, me["id"])

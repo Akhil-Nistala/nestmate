@@ -17,7 +17,7 @@ from core.grouping import build_all, user_deck
 
 PAUSE_S = 4
 # Groups the demo accounts create during the demo (see data/seed_market.py).
-STORY_GROUPS = {"U102": [["U102", "U082"]]}
+STORY_GROUPS = {}
 
 
 def warm(user_ids):

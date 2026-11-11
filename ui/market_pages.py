@@ -59,7 +59,7 @@ def free_chip(li):
 # ---------------------------------------------------------------------------
 # Explore
 # ---------------------------------------------------------------------------
-MODES = {"both": "Flats with people from your batch", "flat": "Flats and rooms", "people": "Flatmates",
+MODES = {"both": "Flats and people", "flat": "Flats and rooms", "people": "Flatmates",
          "group": "Flats for your group"}
 
 
@@ -87,7 +87,7 @@ def _result_card(r, uid, names, ctx, show_interest):
         faces = "".join(f"<span class='face'>{avatar(names(p))}<span>{esc(first(names(p)))}"
                         f"{f' <b>{s:.0f}%</b>' if s is not None else ''}</span></span>"
                         for p, s in r["interested"][:4])
-        extra += (f"<p class='card-p strong'>{n} {'person' if n == 1 else 'people'} from your batch "
+        extra += (f"<p class='card-p strong'>{n} {'person' if n == 1 else 'people'} "
                   f"{'is' if n == 1 else 'are'} interested</p><div class='faces'>{faces}</div>")
     with st.container(key=f"res-{li['id']}"):
         md(f"""<div class='card-head'><div class='ch-main'>
@@ -102,8 +102,7 @@ def _people_mode(ctx, uid, names):
     if not people:
         empty("Nobody fits your dealbreakers yet", "Try a wider budget or fewer dealbreakers in Your answers.")
         return
-    md("<p class='lede'>The people in your batch you'd get on with best. Invite one to start a group, "
-       "or see whole flat groups we've put together.</p>")
+    md("<p class='lede'>The people you'd get on with best. To form a group, go to Flat groups.</p>")
     if st.button("See flat groups", type="primary"):
         nav.go("matches")
     me = market.person(ctx, uid)
@@ -119,16 +118,12 @@ def _people_mode(ctx, uid, names):
                   {money(p['budget_min'])}–{p['budget_max']:,}, wants a {p['flat_size_pref']}-person flat.</p>
                   <p class='fine'>{note}</p></div>{key_tag(score)}</div>""")
             md(habit_grid([me, p], uid))
-            if st.button(f"Start a group with {esc(first(p['name']))}", key=f"inv-{pid}"):
-                actions.create_group(uid, [pid], 2)
-                session.flash(f"Started a group with {first(p['name'])}. Their acceptance is simulated for the demo.")
-                nav.go("group")
 
 
 def _group_mode(ctx, uid, names, listings):
     g = actions.my_group(uid)
     if not g:
-        empty("You don't have a group yet", "Accept a flat group or invite someone from a flat, then come back here.")
+        empty("You don't have a group yet", "Accept a group in Flat groups, then come back here.")
         return
     results = market.group_results(ctx, g["member_ids"], listings)
     lo, hi = market.shared_budget(ctx, g["member_ids"])
@@ -178,7 +173,7 @@ def explore_page():
     state = session.state()["explore"]
     if state.get("open"):
         return listing_detail(state["open"], uid, names, ctx, cohort)
-    page_head("Explore", "Flats, rooms and people from your batch, ranked by how well they fit you.")
+    page_head("Explore", "Flats, rooms and people, ranked by how well they fit you.")
     if me is None:
         need_quiz("Explore")
         return
@@ -199,8 +194,7 @@ def explore_page():
         f = _flat_filters(me)
         results = market.flat_results(ctx, uid, listings, **f)
     else:
-        md("<p class='lede'>Flats with free rooms, and who from your batch is interested in each. "
-           "Open one to invite them and apply together.</p>")
+        md("<p class='lede'>Flats with free rooms, and who else is interested in each.</p>")
         results = [r for r in market.flat_results(ctx, uid, listings) if r["listing"]["kind"] == "room"
                    or len(market.free_rooms(r["listing"])) >= 2]
     if not results:
@@ -214,11 +208,6 @@ def explore_page():
 # ---------------------------------------------------------------------------
 # One flat
 # ---------------------------------------------------------------------------
-def _invite(uid, pid, lid, names):
-    actions.invite_to_listing(uid, pid, lid)
-    session.flash(f"Invited {first(names(pid))} to this flat. Their acceptance is simulated for the demo.")
-
-
 def listing_detail(lid, uid, names, ctx, cohort):
     li = store.get("listings", lid)
     if st.button("Back to results", icon=":material/arrow_back:", type="tertiary", key="back"):
@@ -270,9 +259,9 @@ def listing_detail(lid, uid, names, ctx, cohort):
         g = actions.my_group(uid)
         interested = market.interested_people(ctx, uid, li)
         with st.container(key="interest-panel"):
-            md(f"<h3 class='panel-h'>Interested from your batch</h3>"
+            md(f"<h3 class='panel-h'>Also interested</h3>"
                f"<p class='fine'>{len(interested)} {'person' if len(interested) == 1 else 'people'} "
-               f"who fit your dealbreakers. Invite someone to apply for this flat together.</p>")
+               f"who fit your dealbreakers.</p>")
             for pid, s in interested:
                 p = market.person(ctx, pid)
                 in_group = g and pid in g["member_ids"]
@@ -282,9 +271,6 @@ def listing_detail(lid, uid, names, ctx, cohort):
                        f"</div></div>{key_tag(s)}</div>")
                     if in_group:
                         md(chip("In your group", "ok"))
-                    elif len(free) >= 2 or (g and len(free) > len(g["member_ids"])):
-                        st.button("Invite to this flat", key=f"invite-{pid}", on_click=_invite,
-                                  args=(uid, pid, lid, names))
         mine = uid in li.get("interested", [])
         with st.container(horizontal=True, gap="small", key="detail-actions"):
             if st.button("Remove my interest" if mine else "I'm interested", key="interest"):
@@ -364,7 +350,7 @@ def group_page():
     g = actions.my_group(uid)
     if not g:
         page_head("My group")
-        empty("No group yet", "Accept one of your suggested flat groups, or invite someone from a flat in Explore. "
+        empty("No group yet", "Accept one of your suggested flat groups. "
               "Your group, its flats and your house agreement will appear here.")
         with st.container(horizontal=True, gap="small"):
             if st.button("See flat groups", type="primary"):
