@@ -14,7 +14,7 @@ from core.encode import dealbreaker_list, save_signup
 from core.schema import DEALBREAKERS, GENDER_MIX_UI, QUESTION_UI, TRAIT_SHORT, TRAITS
 from ui import nav, session
 from ui.components import (areas_list, avatar, chip, choice, empty, engine, esc, first, habit_grid, key_tag,
-                           kv_table, md, money, page_head, people_row, persona_label, src_tag)
+                           kv_table, md, money, month_name, page_head, people_row, persona_label, src_tag)
 from ui.quiz import quiz
 
 
@@ -89,7 +89,8 @@ def _continue_items(cohort, ctx):
         items.append((f"Your application for a room in {li['area']}: {status}.", "Explore flats", "explore"))
     due = [p for p in store.load("payments") if p["member_id"] == uid and p["status"] == "due"]
     for p in due:
-        items.append((f"Rent of {money(p['amount'])} is due for {p['month']}.", f"Pay {money(p['amount'])}", "rent"))
+        items.append((f"Rent of {money(p['amount'])} is due for {month_name(p['month'])}.", f"Pay {money(p['amount'])}",
+                      "rent"))
     mine = [li for li in store.load("listings") if li["owner_id"] == uid]
     waiting = [a for a in store.load("applications") if a["listing_id"] in {li["id"] for li in mine}
                and a["status"] in ("sent", "visit_booked")]
@@ -258,7 +259,7 @@ def profile_page():
     md(f"""<div class='persona-hero'>{avatar(user['name'], True, 'lg')}<div>
         <h1 class='display'>{esc(user['name'])}</h1>
         <p>Your lifestyle group in the cohort is <b>{esc(persona_label(persona['name']).lower())}</b>.
-        {esc(persona['description'].replace('Typically — ', 'People in it typically answer '))}</p></div></div>""")
+        {esc(persona['description'])}</p></div></div>""")
 
     left, right = st.columns([1, 1], gap="large")
     priorities = [TRAIT_SHORT[t] for t in str(user.get("priorities", "")).split(";") if t in TRAIT_SHORT]

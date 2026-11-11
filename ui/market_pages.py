@@ -15,22 +15,15 @@ from core import actions, market, store
 from core.schema import AREAS, LISTER_TYPES, LISTING_GENDER, LISTING_KINDS, TRAIT_SHORT, VISIT_SLOTS
 from ui import nav, session
 from ui.components import (avatar, chip, empty, engine, esc, first, habit_grid, join_and, key_tag, md, money,
-                           page_head, people_row, src_tag, stats)
+                           month_name, page_head, people_row, src_tag, stats)
 from ui.member_pages import group_card, group_sentence, me_id, my_profile, need_quiz
 
 UPI_RE = re.compile(r"^[\w.\-]{2,}@[A-Za-z]{2,}$")
-MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
-          "November", "December"]
 
 
 # ---------------------------------------------------------------------------
 # Listing text
 # ---------------------------------------------------------------------------
-def month_name(ym):
-    y, m = ym.split("-")
-    return f"{MONTHS[int(m) - 1]} {y}"
-
-
 def listing_title(li):
     if li["kind"] == "whole_flat":
         return f"{li['bhk']}BHK flat in {esc(li['area'])}"

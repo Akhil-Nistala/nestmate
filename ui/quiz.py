@@ -146,10 +146,11 @@ def _question(q, t):
     with st.container(key=f"q-{t}"):
         widget = st.segmented_control if ui["widget"] == "scale" else st.pills
         kw = {} if _key(q, t) in st.session_state else {"default": q["answers"][t]}
+        # Question and hint above the options; the widget keeps the question as its
+        # (visually hidden) label so screen readers still announce it.
+        md(f"<p class='q-ask'>{ui['ask']}</p>" + (f"<p class='hint'>{ui['hint']}</p>" if ui.get("hint") else ""))
         widget(ui["ask"], list(ui["choices"]), format_func=ui["choices"].get, selection_mode="single",
-               key=_key(q, t), on_change=_set_answer, args=(q, t), **kw)
-        if ui.get("hint"):
-            md(f"<p class='hint'>{ui['hint']}</p>")
+               key=_key(q, t), on_change=_set_answer, args=(q, t), label_visibility="collapsed", **kw)
         with st.container(horizontal=True, gap="medium", key=f"marks-{t}"):
             st.checkbox("Matters a lot to me", key=_key(q, f"priorities-{t}"),
                         on_change=_toggle, args=(q, "priorities", t, MAX_PRIORITIES, "things as mattering a lot"),

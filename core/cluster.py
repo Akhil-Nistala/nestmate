@@ -18,7 +18,7 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
 from core.encode import to_matrix
-from core.schema import TRAITS, WEIGHTS, QUESTIONS
+from core.schema import QUESTION_UI, TRAIT_SHORT, TRAITS, WEIGHTS
 
 K_RANGE = range(3, 9)
 RANDOM_STATE = 42  # fixed seed -> same personas every demo run
@@ -78,13 +78,17 @@ def name_persona(z_centroid, used):
 
 
 def describe_persona(raw_centroid, z_centroid):
-    """One-line description using the 3 most distinctive traits in human labels."""
+    """One-line description from the 3 most distinctive traits, in screen wording.
+    (Display only: persona descriptions never go into LLM prompts.)"""
     bits = []
     for idx in np.argsort(-np.abs(z_centroid))[:3]:
         t = TRAITS[idx]
         val = int(round(raw_centroid[idx]))
-        bits.append(f"{QUESTIONS[t]['label'].rstrip('?').lower()}: {QUESTIONS[t]['options'][val]}")
-    return "Typically — " + "; ".join(bits) + "."
+        text = QUESTION_UI[t]["choices"][val]
+        if not (text.startswith("I ") or text.startswith("I'")):  # keep "I need silence" capitalised
+            text = text[:1].lower() + text[1:]
+        bits.append(f"{TRAIT_SHORT[t]}, {text}")
+    return "Typical answers: " + "; ".join(bits) + "."
 
 
 def run_clustering(df):

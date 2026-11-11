@@ -62,11 +62,21 @@ def choice(trait, value):
 
 
 def persona_label(name):
-    """Persona names are stored as 'Night-owl · Social' (they are part of LLM
+    """Persona names are stored with a middle-dot separator (they are part of LLM
     prompts and the cache, so the stored form can't change). On screen they read
     as 'Night-owl, social'."""
-    parts = name.rstrip("+").split(" · ")
+    parts = name.rstrip("+").split(" " + chr(0xB7) + " ")
     return ", ".join([parts[0]] + [p[:1].lower() + p[1:] for p in parts[1:]])
+
+
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December"]
+
+
+def month_name(ym):
+    """'2027-07' -> 'July 2027'."""
+    y, m = str(ym).split("-")[:2]
+    return f"{MONTHS[int(m) - 1]} {y}"
 
 
 def money(n):
@@ -152,6 +162,13 @@ def progress(done, total, text=None):
 # Habit grid: why a group fits, one column per person
 # ---------------------------------------------------------------------------
 GRID_TRAITS = ["sleep_time", "cleanliness", "guests_frequency", "food", "smoking"]
+# Shorter words where the quiz wording is a full sentence, so grid cells stay one line.
+GRID_WORDS = {
+    "food": {1: "Veg only", 2: "Veg, non-veg ok", 3: "Non-veg"},
+    "smoking": {1: "No, can't stand it", 2: "No, doesn't mind", 3: "Smokes"},
+    "drinking": {1: "No, can't stand it", 2: "No, doesn't mind", 3: "Sometimes", 4: "Often"},
+    "noise_tolerance": {1: "Needs silence", 2: "Mostly quiet", 3: "Some is fine", 4: "Lively is fine", 5: "Doesn't mind"},
+}
 VERDICT = {"same": ("Same", "ok"), "close": ("Close", ""), "differs": ("Differs", "warn")}
 
 
@@ -171,7 +188,8 @@ def habit_grid(people, me_id=None, traits=GRID_TRAITS):
     for t in traits:
         vals = [int(p[t]) for p in people]
         v_text, v_kind = VERDICT[verdict(vals)]
-        cells = "".join(f"<td>{esc(choice(t, v))}</td>" for v in vals)
+        words = GRID_WORDS.get(t) or QUESTION_UI[t]["choices"]
+        cells = "".join(f"<td>{esc(words[v])}</td>" for v in vals)
         body += (f"<tr><th scope='row'>{TRAIT_SHORT[t].capitalize()}</th>{cells}"
                  f"<td class='verdict'>{chip(v_text, v_kind) if len(people) > 1 else ''}</td></tr>")
     return (f"<div class='grid-wrap'><table class='habits'><thead><tr><th scope='col'><span class='sr'>Habit</span></th>"

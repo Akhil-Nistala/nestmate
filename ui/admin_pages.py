@@ -102,7 +102,7 @@ def overview_page():
         fig.update_yaxes(showticklabels=False, title=None, showgrid=False, showline=False)
         st.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": False})
     with right, st.container(key="chart-personas"):
-        section("Personas", "Found by k-means; named from their strongest traits.")
+        section("Personas", "Found by k-means and named from their strongest traits.")
         total = len(mine)
         rows = ""
         for p in sorted(cl["personas"].values(), key=lambda p: -counts.get(p["name"], 0)):
@@ -124,21 +124,23 @@ def overview_page():
         d = d.groupby(["office_location", "persona"]).size().reset_index(name="people")
         fig = px.bar(d, y="office_location", x="people", color="persona", orientation="h",
                      color_discrete_map=colors, category_orders={"office_location": OFFICES})
-        fig.update_traces(marker_line_width=0)
+        fig.update_traces(marker_line_width=2, marker_line_color=tok("surface"))  # 2px gap between segments
         fig = style_fig(fig, 300)
         fig.update_layout(bargap=0.45)
         fig.update_xaxes(title=None)
         fig.update_yaxes(title=None, showgrid=False)
         st.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": False})
     with right, st.container(key="chart-k"):
-        section("How many personas?", "Silhouette score by number of clusters across the partner cohort; "
-                                      "the highest wins.")
+        section("How many personas?", "Silhouette score for each number of clusters, across the partner cohort. "
+                                      "The highest wins.")
         s = pd.DataFrame({"k": list(cl["silhouette_scores"]), "score": list(cl["silhouette_scores"].values())})
         fig = px.line(s, x="k", y="score", markers=True)
-        fig.update_traces(line=dict(color=tok("accent"), width=2.5), marker=dict(size=8, color=tok("accent")))
-        fig.add_vline(x=cl["best_k"], line=dict(color=tok("line"), width=1, dash="dot"))
-        fig.add_annotation(x=cl["best_k"], y=cl["silhouette"], text=f"k = {cl['best_k']}", showarrow=False,
-                           yshift=16, font=dict(color=tok("accent"), size=12))
+        series = PERSONA_COLORS[mode()][0]  # one series: the first categorical slot, not the action pink
+        fig.update_traces(line=dict(color=series, width=2), marker=dict(size=8, color=series,
+                                                                         line=dict(width=2, color=tok("surface"))))
+        fig.add_vline(x=cl["best_k"], line=dict(color=tok("muted"), width=1, dash="dot"))
+        fig.add_annotation(x=cl["best_k"], y=cl["silhouette"], text=f"Best: {cl['best_k']} personas", showarrow=False,
+                           yshift=18, xshift=58, font=dict(color=tok("ink"), size=12))
         fig = style_fig(fig, 300)
         fig.update_xaxes(title=None, dtick=1)
         fig.update_yaxes(title=None)
