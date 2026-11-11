@@ -39,7 +39,7 @@ and the free tier allows only ~20 requests/day per model, so cached answers make
 demo instant and quota-proof. Model: `gemini-3.5-flash-lite` (set in `.env`).
 
 Reset the demo: delete `data/signups.csv` (new sign-ups' quiz answers) and `data/accounts.json`
-(logins; re-created with the seeded HR admin on next start). Seed data is never modified.
+(logins; the seeded HR admin is re-created on next start while demo mode is on). Seed data is never modified.
 
 ## Roles, routes and login
 | Who | Routes | Sees |
@@ -59,7 +59,8 @@ browser refresh via a random session-id cookie.
 **Demo mode** (on the login page, only when `NESTMATE_DEMO=1` is set, as in `.env.example`):
 one click as the HR admin, or as any synthetic seed member. Real sign-ups can never be
 picked, and demo mode is off by default so a shared deployment doesn't allow password-free logins.
-Seeded admin login: `hr@deloitte.com` / `nestmate-hr`.
+Seeded admin login: `hr@deloitte.com` / `nestmate-hr` — this account only exists and only
+accepts logins while demo mode is on.
 
 **Light / dark mode**: follows the system setting; the sun/moon button in the top bar switches it.
 

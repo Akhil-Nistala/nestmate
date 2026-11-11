@@ -2,7 +2,8 @@
 Accounts: email + password login with two roles.
 
   member - a fresher/intern. Sees only their own profile, matches and flat.
-  admin  - HR at a partner organisation. Sees the whole-cohort dashboard.
+  admin  - HR at a partner organisation. Sees their own organisation's joiners
+           (matching itself runs on the whole partner cohort).
 
 WHY a JSON file (not a DB or an auth provider): a 48h prototype needs real
 sign-up/login behaviour the panel can poke at, not production infrastructure.
@@ -30,6 +31,8 @@ MIN_PASSWORD = 8
 _ITERATIONS = 200_000
 
 # Seeded HR account so the admin route can be demoed with a real login.
+# WHY only in demo mode: its password is public (README, login page), so on a
+# deployment without NESTMATE_DEMO=1 it must not be created or accept logins.
 DEMO_ADMIN = {"email": "hr@deloitte.com", "password": "nestmate-hr", "name": "Priya Nair"}
 
 
@@ -46,12 +49,14 @@ def _new_record(name, email, password, role, **extra):
 
 
 def _load():
+    accounts = {}
     if os.path.exists(ACCOUNTS_JSON):
         with open(ACCOUNTS_JSON, encoding="utf-8") as f:
-            return json.load(f)
-    accounts = {DEMO_ADMIN["email"]: _new_record(DEMO_ADMIN["name"], DEMO_ADMIN["email"],
-                                                 DEMO_ADMIN["password"], "admin")}
-    _save(accounts)
+            accounts = json.load(f)
+    if demo_enabled() and DEMO_ADMIN["email"] not in accounts:
+        accounts[DEMO_ADMIN["email"]] = _new_record(DEMO_ADMIN["name"], DEMO_ADMIN["email"],
+                                                    DEMO_ADMIN["password"], "admin")
+        _save(accounts)
     return accounts
 
 
@@ -86,7 +91,8 @@ def sign_up(name, email, password, confirm, gender, office, joining_month):
     if password != confirm:
         return None, "Passwords don't match."
     accounts = _load()
-    if email in accounts:
+    # WHY reserved: nobody may claim the demo HR address as a normal account.
+    if email in accounts or email == DEMO_ADMIN["email"]:
         return None, "An account with this email already exists. Log in instead."
     accounts[email] = _new_record(name, email, password, "member", user_id=member_id(email),
                                   gender=gender, office_location=office, joining_month=joining_month)
@@ -97,7 +103,10 @@ def sign_up(name, email, password, confirm, gender, office, joining_month):
 def log_in(email, password):
     """Returns (account, None) or (None, error). One generic error on purpose:
     don't reveal whether the email exists."""
-    rec = _load().get(email.strip().lower())
+    email = email.strip().lower()
+    if email == DEMO_ADMIN["email"] and not demo_enabled():
+        return None, "Email or password is incorrect."
+    rec = _load().get(email)
     if rec and hmac.compare_digest(rec["password_hash"], _hash(password, rec["salt"])):
         return public(rec), None
     return None, "Email or password is incorrect."

@@ -78,7 +78,7 @@ def overview_page():
     ids, groups, unmatched, placed = _org_view(mine, res)
     counts = cl["points"][cl["points"]["id"].isin(ids)]["persona"].value_counts()
     stats([("Joiners", len(mine), f"from {esc(org)}"),
-           ("Lifestyle personas", len(counts), f"silhouette {cl['silhouette']:.2f}"),
+           ("Lifestyle personas", len(counts), f"of {len(cl['personas'])} across the partner cohort"),
            ("Flat groups", len(groups), f"avg match {sum(g['score'] for g in groups) / max(1, len(groups)):.0f}"),
            ("Placed", f"{placed / len(mine):.0%}", f"{len(unmatched)} need follow-up")])
 
@@ -150,6 +150,12 @@ def _members_cell(g, ids):
     return ", ".join(names) + (f" + {others} from other organisations" if others else "")
 
 
+def _offices_cell(g, ids):
+    """Offices of this org's members only. WHY not the flat budget too: the budget
+    is the flat's shared rent band (what HR books against), not one person's data."""
+    return ", ".join(sorted({m["office_location"] for m in g["members"] if m["id"] in ids}))
+
+
 def flats_page():
     _require_admin()
     org, mine, cl, res = _load()
@@ -173,8 +179,9 @@ def flats_page():
            ("Unmatched", len(unmatched))])
     table = pd.DataFrame([{"Group": x["group_id"], "Match": x["score"], "Persona": x["persona"],
                            "Members": _members_cell(x, ids),
-                           "Size": f"{x['size']} / {x['target']}", "Offices": ", ".join(x["offices"]),
-                           "Budget (₹)": f"{x['budget'][0]:,} – {x['budget'][1]:,}"} for x in g])
+                           "Size": f"{x['size']} / {x['target']}",
+                           "Offices": _offices_cell(x, ids),
+                           "Flat budget (₹)": f"{x['budget'][0]:,} – {x['budget'][1]:,}"} for x in g])
     st.dataframe(table, hide_index=True, width="stretch", height=420,
                  column_config={"Match": st.column_config.ProgressColumn("Match", min_value=0, max_value=100,
                                                                          format="%.0f", width="small"),
