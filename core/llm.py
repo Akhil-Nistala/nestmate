@@ -24,7 +24,9 @@ from core.schema import TRAITS, QUESTIONS, TRAIT_RANGE
 
 load_dotenv()
 CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "llm_cache.json")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")  # pinned: tested fast on our key; -latest aliases timed out
+# Pinned: tested fast on our key; -latest aliases timed out. Must match the model the
+# committed llm_cache.json was warmed with, because the cache key includes the model name.
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 LAST_ERROR = {"msg": None}
 TIMEOUT_S = 25  # long enough for a real answer, short enough that the demo falls back quickly
 

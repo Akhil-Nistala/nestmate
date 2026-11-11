@@ -25,7 +25,7 @@ python -m venv .venv
 .venv\Scripts\activate            # Windows  (source .venv/bin/activate on Mac/Linux)
 pip install -r requirements.txt
 python data/generate.py            # creates data/profiles.csv (200 people, seed 42)
-copy .env.example .env             # optional: add GEMINI_API_KEY
+copy .env.example .env             # turns on demo mode; optionally add GEMINI_API_KEY
 streamlit run app.py
 python -m core.evaluate            # sanity checks + metrics
 ```
@@ -46,14 +46,19 @@ Reset the demo: delete `data/signups.csv` (new sign-ups' quiz answers) and `data
 |---|---|---|
 | Logged out | `/` log in · `/signup` | Brand panel, login / sign-up, demo mode |
 | Member (fresher) | `/onboarding` until the quiz is done, then `/` matches · `/flat` · `/profile` · `/preferences` | Only their own profile, suggested groups and flat |
-| Admin (HR) | `/` overview · `/admin-flats` · `/admin-people` · `/admin-model` | Whole-cohort stats, personas, all flats, people table, model checks |
+| Admin (HR) | `/` overview · `/admin-flats` · `/admin-people` · `/admin-model` | Their own organisation's joiners only: stats, personas, flats, people table; cohort-wide model checks |
+
+Matching runs on the whole partner cohort, so a flat can mix organisations. HR sees
+only their own joiners by name; flatmates from other organisations appear as a count.
 
 Routes are built per role with `st.navigation`, so a member has no admin URL to visit
 (it falls back to their home page), and every admin page re-checks the role.
 Passwords are salted PBKDF2 hashes in `data/accounts.json`. The session survives a
 browser refresh via a random session-id cookie.
 
-**Demo mode** (on the login page): one click as the HR admin, or as any cohort member.
+**Demo mode** (on the login page, only when `NESTMATE_DEMO=1` is set, as in `.env.example`):
+one click as the HR admin, or as any synthetic seed member. Real sign-ups can never be
+picked, and demo mode is off by default so a shared deployment doesn't allow password-free logins.
 Seeded admin login: `hr@deloitte.com` / `nestmate-hr`.
 
 **Light / dark mode**: follows the system setting; the sun/moon button in the top bar switches it.

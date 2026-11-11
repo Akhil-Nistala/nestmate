@@ -8,7 +8,7 @@ so the live demo never depends on typing a password on stage.
 import streamlit as st
 
 from core import auth
-from core.encode import load_cohort
+from core.encode import load_cohort, seed_ids
 from core.schema import ALLOWED_DOMAINS, GENDERS, JOINING_MONTHS, OFFICES
 from ui import nav, session
 from ui.components import md
@@ -62,6 +62,9 @@ def login_page():
                 _finish_login(acc)
         st.page_link(nav.PAGES["signup"], label="New here? **Create an account**")
 
+        # WHY gated: demo mode skips passwords, so it only exists when NESTMATE_DEMO=1.
+        if not auth.demo_enabled():
+            return
         md("<div class='divider'><span>or explore the demo</span></div>")
         with st.container(key="demo-box"):
             md("<div class='demo-label'>Demo mode <span class='chip'>no password</span></div>")
@@ -69,7 +72,9 @@ def login_page():
             if c1.button("HR admin", icon=":material/insights:", width="stretch",
                          help=f"Same as logging in as {auth.DEMO_ADMIN['email']} / {auth.DEMO_ADMIN['password']}"):
                 _finish_login(auth.demo_admin())
+            # Only synthetic seed profiles: real sign-ups can't be impersonated.
             cohort = load_cohort()
+            cohort = cohort[cohort["id"].isin(seed_ids())]
             names = dict(zip(cohort["id"], cohort["name"]))
             with c2.popover("Cohort member", icon=":material/person:", width="stretch"):
                 pick = st.selectbox("Sign in as", sorted(names, key=names.get),

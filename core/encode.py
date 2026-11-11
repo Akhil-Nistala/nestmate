@@ -39,6 +39,11 @@ def load_cohort():
     return _clean(df)
 
 
+def seed_ids():
+    """Ids of the synthetic seed profiles (never real sign-ups)."""
+    return set(pd.read_csv(PROFILES_CSV, usecols=["id"])["id"])
+
+
 def save_signup(profile: dict):
     """Upsert one new user's profile into signups.csv."""
     row = pd.DataFrame([profile])

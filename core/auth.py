@@ -18,8 +18,12 @@ import os
 import secrets
 from datetime import datetime, timezone
 
-from core.encode import DATA_DIR
+from dotenv import load_dotenv
+
+from core.encode import DATA_DIR, seed_ids
 from core.schema import ALLOWED_DOMAINS, email_domain, is_allowed_email
+
+load_dotenv()
 
 ACCOUNTS_JSON = os.path.join(DATA_DIR, "accounts.json")
 MIN_PASSWORD = 8
@@ -101,13 +105,31 @@ def log_in(email, password):
 
 # ---------------------------------------------------------------------------
 # Demo mode: one-click entry for the live demo, clearly labelled in the UI.
+#
+# WHY opt-in via NESTMATE_DEMO=1: demo mode logs in WITHOUT a password (as HR
+# admin or as a cohort member), so it must never be on by accident on a shared
+# deployment. WHY only seed profiles: real sign-ups must never be impersonable,
+# even with demo mode on.
 # ---------------------------------------------------------------------------
+def demo_enabled():
+    return os.getenv("NESTMATE_DEMO", "").strip().lower() in ("1", "true", "yes")
+
+
+def _require_demo():
+    if not demo_enabled():
+        raise PermissionError("Demo mode is off (set NESTMATE_DEMO=1).")
+
+
 def demo_admin():
+    _require_demo()
     return {**public(_load()[DEMO_ADMIN["email"]]), "demo": True}
 
 
 def demo_member(row):
-    """Sign in as an existing (synthetic) cohort member, who has no password."""
+    """Sign in as an existing synthetic seed member, who has no password."""
+    _require_demo()
+    if row["id"] not in seed_ids():
+        raise PermissionError("Demo mode can only sign in as synthetic seed profiles.")
     return {"email": row["email"], "name": row["name"], "role": "member", "user_id": row["id"],
             "organisation": row["organisation"], "gender": row["gender"],
             "office_location": row["office_location"], "joining_month": row["joining_month"], "demo": True}
