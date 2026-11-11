@@ -10,6 +10,13 @@ describe_group/group_score. This module only decides WHICH people to compare
 (a seeker and the people already living in a flat, a group and a flat) and
 adds the practical side (rent and commute) where no people are involved.
 
+Residents who aren't in the cohort (a landlord who lives in, a flatmate who
+isn't on Nestmate) count once the lister has described their habits on the
+listing form. WHY the same formula: a described housemate is turned into a
+profile row and scored by grouping.pair_scores, so their numbers mean exactly
+what a cohort member's do. They never block on budget or gender preference
+(they already live there); seekers' dealbreakers still apply to them.
+
 Score meanings, so the UI can say what a number is:
   "people"    - lifestyle fit with the people you'd live with (pair scores)
   "group"     - group score of everyone who'd live there
@@ -19,8 +26,9 @@ import itertools
 from collections import defaultdict
 
 import numpy as np
+import pandas as pd
 
-from core.grouping import conflict_reason, describe_group, group_score
+from core.grouping import conflict_reason, describe_group, pair_scores
 from core.schema import (AREAS, MAX_ACTIVE_LISTINGS, MIN_SHOWN_FIT, QUESTION_UI, SCAM_DISCOUNT, TRAIT_RANGE,
                          TRAIT_SHORT, TRAITS, WEIGHTS)
 
@@ -32,30 +40,91 @@ _RANGE = np.array([TRAIT_RANGE[t][1] - TRAIT_RANGE[t][0] for t in TRAITS], dtype
 # ---------------------------------------------------------------------------
 # Context: the cohort and its matching results, indexed by member id
 # ---------------------------------------------------------------------------
-def make_ctx(df, clustering, res):
+# Columns a profile needs for pair scoring and describe_group.
+PROFILE_COLS = ["id", "name", "gender", "budget_min", "budget_max", "preferred_gender_mix", "dealbreakers",
+                "priorities", "office_location", "organisation"] + TRAITS
+
+
+def described_profile(p):
+    """A people-store row with lister-described habits -> a scoreable profile row.
+    Wide budget and "any" gender mix: they already live there, so only habits and
+    the seeker's dealbreakers matter."""
+    a = p.get("answers") or {}
+    if not all(t in a for t in TRAITS):
+        return None
+    return {"id": p["id"], "name": p["name"], "gender": p.get("gender", ""), "budget_min": 0,
+            "budget_max": 10 ** 9, "preferred_gender_mix": "any", "dealbreakers": "", "priorities": "",
+            "office_location": "", "organisation": "", "described_by": p.get("described_by"),
+            **{t: int(a[t]) for t in TRAITS}}
+
+
+def make_ctx(df, clustering, res, people=()):
+    cohort_ids = set(df["id"])
+    described = {}
+    for p in people:
+        row = described_profile(p)
+        if row and p["id"] not in cohort_ids:
+            described[p["id"]] = row
     return {"df": df, "S": res["S"], "compat": res["compat"], "cl": clustering,
-            "pos": {pid: i for i, pid in enumerate(df["id"])}, "rows": df.set_index("id", drop=False)}
+            "pos": {pid: i for i, pid in enumerate(df["id"])}, "rows": df.set_index("id", drop=False),
+            "described": described}
 
 
 def in_cohort(ctx, pid):
     return pid in ctx["pos"]
 
 
+def known(ctx, pid):
+    """Has habit answers we can score: a cohort member or a described resident."""
+    return in_cohort(ctx, pid) or pid in ctx.get("described", {})
+
+
+def is_described(ctx, pid):
+    return not in_cohort(ctx, pid) and pid in ctx.get("described", {})
+
+
 def person(ctx, pid):
     return ctx["rows"].loc[pid].to_dict() if in_cohort(ctx, pid) else None
 
 
+def profile(ctx, pid):
+    """Cohort row, or a described resident's profile, or None."""
+    if in_cohort(ctx, pid):
+        return person(ctx, pid)
+    d = ctx.get("described", {}).get(pid)
+    return dict(d) if d else None
+
+
+def _profiles_df(ctx, ids):
+    rows = [profile(ctx, i) for i in ids]
+    return pd.DataFrame([{c: r.get(c, "") for c in PROFILE_COLS} for r in rows])
+
+
 def pair(ctx, a, b):
-    """(score 0..100, compatible) for two cohort members; (None, True) if either has no answers."""
-    if not (in_cohort(ctx, a) and in_cohort(ctx, b)):
+    """(score 0..100, compatible) for two people with answers; (None, True) if either has none.
+    Two cohort members use the precomputed matrix; anyone described is scored with
+    the same pair_scores formula on the fly."""
+    if in_cohort(ctx, a) and in_cohort(ctx, b):
+        i, j = ctx["pos"][a], ctx["pos"][b]
+        return float(ctx["S"][i, j]), bool(ctx["compat"][i, j])
+    if not (known(ctx, a) and known(ctx, b)):
         return None, True
-    i, j = ctx["pos"][a], ctx["pos"][b]
-    return float(ctx["S"][i, j]), bool(ctx["compat"][i, j])
+    S, compat = pair_scores(_profiles_df(ctx, [a, b]))
+    return float(S[0, 1]), bool(compat[0, 1])
+
+
+def fit_together(ctx, ids):
+    """(all compatible, mean pair score) for people with answers; unknown ids are skipped."""
+    ids = [i for i in dict.fromkeys(ids) if known(ctx, i)]
+    pairs = [pair(ctx, a, b) for a, b in itertools.combinations(ids, 2)]
+    if not pairs:
+        return True, None
+    return all(ok for _, ok in pairs), float(np.mean([s for s, _ in pairs]))
 
 
 def biggest_difference(ctx, a, b):
     """The trait two people differ on most (weighted), as (trait key, a's answer, b's answer)."""
-    pa, pb = person(ctx, a), person(ctx, b)
+    pa, pb = profile(ctx, a), profile(ctx, b)
     gaps = [abs(pa[t] - pb[t]) / _RANGE[k] * _W[k] for k, t in enumerate(TRAITS)]
     k = int(np.argmax(gaps))
     if gaps[k] == 0:
@@ -65,10 +134,23 @@ def biggest_difference(ctx, a, b):
 
 
 def describe(ctx, member_ids):
-    """describe_group for any list of cohort member ids (order kept)."""
-    idx = [ctx["pos"][m] for m in member_ids if in_cohort(ctx, m)]
-    d = describe_group(idx, ctx["df"], ctx["S"], ctx["cl"]["personas"], ctx["cl"]["labels"])
-    d["target"] = len(idx)
+    """describe_group for any list of people with answers (order kept): cohort
+    members and described residents. Others are skipped."""
+    ids = [m for m in dict.fromkeys(member_ids) if known(ctx, m)]
+    if all(in_cohort(ctx, m) for m in ids):
+        idx = [ctx["pos"][m] for m in ids]
+        d = describe_group(idx, ctx["df"], ctx["S"], ctx["cl"]["personas"], ctx["cl"]["labels"])
+    else:
+        # WHY a small local table: described residents aren't in the cohort matrix.
+        # They get no persona vote; the flat's persona comes from cohort members.
+        df = _profiles_df(ctx, ids)
+        S, _ = pair_scores(df)
+        votes = [int(ctx["cl"]["labels"][ctx["pos"][m]]) for m in ids if in_cohort(ctx, m)]
+        fallback = max(set(votes), key=votes.count) if votes else 0
+        labels = [int(ctx["cl"]["labels"][ctx["pos"][m]]) if in_cohort(ctx, m) else fallback for m in ids]
+        d = describe_group(list(range(len(ids))), df, S, ctx["cl"]["personas"], labels)
+        d["offices"] = [o for o in d["offices"] if o]
+    d["target"] = len(ids)
     return d
 
 
@@ -147,14 +229,14 @@ def practical_fit(rent, lo, hi, minutes):
 # Seeker <-> people living in a flat
 # ---------------------------------------------------------------------------
 def room_fit(ctx, me, listing):
-    """Fit with the people who already live there (cohort members only).
-    Returns None if nobody with answers lives there, else
+    """Fit with the people who already live there (cohort members and described
+    residents). Returns None if nobody with answers lives there, else
     {score, with: [(id, score)], lowest: (id, score, difference), blocked: reason}."""
-    occ = [o for o in residents(listing) if o != me and in_cohort(ctx, o)]
+    occ = [o for o in residents(listing) if o != me and known(ctx, o)]
     if not occ or not in_cohort(ctx, me):
         return None
     for o in occ:
-        why = conflict_reason(person(ctx, me), person(ctx, o))
+        why = conflict_reason(person(ctx, me), profile(ctx, o))
         if why:
             return {"score": 0, "with": [], "lowest": None, "blocked": why}
     scores = [(o, pair(ctx, me, o)[0]) for o in occ]
@@ -175,50 +257,101 @@ def interested_people(ctx, me, listing):
     return sorted(out, key=lambda x: (-(x[1] or 0), x[0]))
 
 
-def flat_results(ctx, me, listings, budget=None, areas=None, kind=None, max_commute=None, office=None,
-                 rank="practical"):
-    """Live listings with a free room that `me` may live in, filtered and ranked.
-    me: member id (may be outside the cohort; then no people scores).
-    rank="people": flats where you'd fit the people involved come first (fit
-    with residents, or your best match among those interested), then rent and
-    commute. rank="practical": rent and commute first."""
+def _solo_row(ctx, me, li):
+    """One listing for one seeker, or None if they can't live there."""
     p = person(ctx, me) or {}
-    office = office or p.get("office_location")
-    lo, hi = budget or (p.get("budget_min", 0), p.get("budget_max", 10 ** 9))
+    free = free_rooms(li)
+    if not free or li["owner_id"] == me or me in residents(li):
+        return None
+    if p and listing_blocks(li, p):
+        return None
+    rf = room_fit(ctx, me, li)
+    if rf and rf["blocked"]:
+        return None
+    room = min(free, key=lambda r: (r["rent"], r["room_id"]))
+    office = p.get("office_location")
+    minutes = commute(li["area"], office) if office else None
+    hi = p.get("budget_max", 10 ** 9)
+    interested = interested_people(ctx, me, li)
+    best = max((x for _, x in interested if x is not None), default=None)
+    people = {"kind": "residents", "score": rf["score"], "with": rf["with"], "lowest": rf["lowest"]} if rf else None
+    return {"listing": li, "rooms": [room], "rent": room["rent"], "rent_max": room["rent"],
+            "rent_total": room["rent"], "minutes": minutes, "office": office, "budget_max": hi,
+            "within_budget": room["rent"] <= hi, "practical": practical_fit(room["rent"], 0, hi, minutes),
+            "people": people, "interested": interested, "signal": rf["score"] if rf else best}
+
+
+def _group_row(ctx, group, li):
+    """One listing for a whole group, or None: it needs a free room per person,
+    every room inside the shared budget, house rules that suit everyone, and
+    everyone (residents included) compatible under the hard rules."""
+    if li["owner_id"] in group:
+        return None
+    rooms = pick_rooms(li, len(group))
+    lo, hi = shared_budget(ctx, group)
+    if len(rooms) < len(group) or any(r["rent"] > hi for r in rooms):
+        return None
+    if any(listing_blocks(li, person(ctx, m)) for m in group):
+        return None
+    live = [o for o in residents(li) if known(ctx, o) and o not in group]
+    ok, score = fit_together(ctx, group + live)
+    if not ok:
+        return None
+    with_ = [(o, float(np.mean([pair(ctx, m, o)[0] for m in group]))) for o in live]
+    minutes = round(float(np.mean([commute(li["area"], person(ctx, m)["office_location"]) for m in group])))
+    rents = [r["rent"] for r in rooms]
+    return {"listing": li, "rooms": rooms, "rent": min(rents), "rent_max": max(rents), "rent_total": sum(rents),
+            "minutes": minutes, "office": None, "budget_max": hi, "within_budget": True,
+            "practical": practical_fit(max(rents), lo, hi, minutes),
+            "people": {"kind": "group", "score": round(score or 0), "with": with_, "lowest": None},
+            "interested": [], "signal": round(score or 0)}
+
+
+def flat_results(ctx, me, listings, *, members=None, sort="people", shareable_only=False, budget=None,
+                 areas=None, kind=None, max_commute=None):
+    """Live flats `me` (or me and my group) could move into, filtered and sorted.
+
+    members: everyone in my group when searching as a group (me included), else None.
+    sort="people": flats with a people signal first, best fit first. The signal
+      is fit with the people already living there; for an empty flat, the best
+      fit among people interested in it (MIN_SHOWN_FIT or more). In a group it's
+      the group's fit with any residents. Flats without a signal follow, by
+      rent and commute.
+    sort="practical": rent against budget, then commute.
+    shareable_only: rooms in a shared flat, or whole flats with 2+ free rooms
+      (just me only; a group search always needs a room each).
+    budget=(lo, hi) keeps flats whose rooms all fall in that rent range.
+
+    Each result: listing, rooms (the rooms you'd take), rent, rent_max,
+    rent_total, minutes, office, budget_max, within_budget, practical (for
+    sorting only, never shown as a %), people ({kind, score, with, lowest} or
+    None), interested ([(id, score)]), signal (people fit used to sort, or None).
+    """
+    group = list(dict.fromkeys([me] + list(members))) if members and len(members) > 1 else None
     out = []
     for li in listings:
-        free = free_rooms(li)
-        if not is_live(li) or not free or li["owner_id"] == me or me in residents(li):
+        if not is_live(li):
             continue
         if kind and li["kind"] != kind:
             continue
         if areas and li["area"] not in areas:
             continue
-        if p and listing_blocks(li, p):
+        if shareable_only and not group and li["kind"] != "room" and len(free_rooms(li)) < 2:
             continue
-        rf = room_fit(ctx, me, li)
-        if rf and rf["blocked"]:
+        r = _group_row(ctx, group, li) if group else _solo_row(ctx, me, li)
+        if r is None:
             continue
-        rent = min(r["rent"] for r in free)
-        minutes = commute(li["area"], office) if office else None
-        if budget and not (lo <= rent <= hi):
+        if budget and not all(budget[0] <= x["rent"] <= budget[1] for x in r["rooms"]):
             continue
-        if max_commute and minutes is not None and minutes > max_commute:
+        if max_commute and r["minutes"] is not None and r["minutes"] > max_commute:
             continue
-        practical = practical_fit(rent, lo, hi, minutes)
-        interested = interested_people(ctx, me, li)
-        best_interested = max((s for _, s in interested if s is not None), default=None)
-        out.append({"listing": li, "rent": rent, "minutes": minutes, "practical": practical,
-                    "label": practical_label(rent, lo, hi, minutes),
-                    "room_fit": rf, "score": rf["score"] if rf else None,
-                    "people_score": rf["score"] if rf else best_interested,
-                    "basis": "people" if rf else "practical", "interested": interested})
-    if rank == "people":
-        # Ties (same whole-number fit) go to the flat with more free rooms: room for people to move in together.
-        key = lambda r: (-round(r["people_score"] or -1), -len(free_rooms(r["listing"])), -r["practical"],  # noqa: E731
-                         r["rent"], r["listing"]["id"])
+        out.append(r)
+    if sort == "people":
+        # Ties (same whole-number fit) go to the flat with more free rooms: room to move in together.
+        key = lambda r: (r["signal"] is None, -round(r["signal"] or 0), -len(free_rooms(r["listing"])),  # noqa: E731
+                         -r["practical"], r["rent"], r["listing"]["id"])
     else:
-        key = lambda r: (-r["practical"], -(r["people_score"] or -1), r["rent"], r["listing"]["id"])  # noqa: E731
+        key = lambda r: (-r["practical"], -(r["signal"] or -1), r["rent"], r["listing"]["id"])  # noqa: E731
     return sorted(out, key=key)
 
 
@@ -263,44 +396,17 @@ def pick_rooms(listing, n, taken=()):
     return free[:n]
 
 
-def group_results(ctx, member_ids, listings):
-    """Live listings a whole group can move into together: enough free rooms,
-    every room's rent inside the group's shared budget, house rules and the
-    current residents compatible with everyone. Ranked by the group score of
-    everyone who'd live there, then average commute, then total rent."""
-    lo, hi = shared_budget(ctx, member_ids)
-    n = len(member_ids)
-    out = []
-    for li in listings:
-        if not is_live(li) or li["owner_id"] in member_ids:
-            continue
-        rooms = pick_rooms(li, n)
-        if len(rooms) < n or any(not (r["rent"] <= hi) for r in rooms):
-            continue
-        if any(listing_blocks(li, person(ctx, m)) for m in member_ids):
-            continue
-        everyone = list(dict.fromkeys(member_ids + [o for o in residents(li) if in_cohort(ctx, o)]))
-        idx = [ctx["pos"][m] for m in everyone]
-        if not all(ctx["compat"][a, b] for a, b in itertools.combinations(idx, 2)):
-            continue
-        offices = [person(ctx, m)["office_location"] for m in member_ids]
-        out.append({"listing": li, "rooms": rooms, "rent_total": sum(r["rent"] for r in rooms),
-                    "score": round(group_score(idx, ctx["S"])), "with_residents": len(everyone) > n,
-                    "minutes": round(float(np.mean([commute(li["area"], o) for o in offices])))})
-    return sorted(out, key=lambda r: (-r["score"], r["minutes"], r["rent_total"], r["listing"]["id"]))
-
-
 # ---------------------------------------------------------------------------
 # Lister's view of an application
 # ---------------------------------------------------------------------------
 def applicant_view(ctx, listing, member_ids):
     """Fit of applicants with each other and with whoever already lives there.
     Returns {score, basis, reasons: [str], clash: str or None}."""
-    live = [o for o in residents(listing) if in_cohort(ctx, o)]
+    live = [o for o in residents(listing) if known(ctx, o)]
     everyone = list(dict.fromkeys(member_ids + live))
-    known = [m for m in everyone if in_cohort(ctx, m)]
-    if len(known) >= 2:
-        d = describe(ctx, known)
+    scored = [m for m in everyone if known(ctx, m)]
+    if len(scored) >= 2:
+        d = describe(ctx, scored)
         reasons = [f"Same or close on {m['trait']}" for m in d["matching"]]
         clash = (f"{d['friction'][0]['person']} differs on {d['friction'][0]['trait']}: "
                  f"{d['friction'][0]['detail'].split(': ', 1)[1]}") if d["friction"] else None

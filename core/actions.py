@@ -108,6 +108,17 @@ def shortlist(group_id, listing_id):
     store.mutate("groups", fn)
 
 
+def unshortlist(group_id, listing_id):
+    """Take a flat off the group's shortlist (and drop it as the group's anchor flat)."""
+    def fn(rows):
+        for g in rows:
+            if g["id"] == group_id:
+                g["shortlist"] = [x for x in g["shortlist"] if x != listing_id]
+                if g.get("anchored_listing_id") == listing_id:
+                    g["anchored_listing_id"] = None
+    store.mutate("groups", fn)
+
+
 def mark_interested(listing_id, mid, on=True):
     def fn(rows):
         for li in rows:
@@ -159,7 +170,10 @@ def book_visit(app_id, slot):
 
 def reject_application(app_id, reason=""):
     app = store.update("applications", app_id, status="rejected", reason=reason)
-    if app and app.get("group_id"):
+    # Back to forming only if the group has no other application still open.
+    if app and app.get("group_id") and not any(
+            a["group_id"] == app["group_id"] for a in store.load("applications")
+            if a.get("group_id") and a["status"] in ("sent", "visit_booked")):
         store.update("groups", app["group_id"], status="forming")
 
 
@@ -177,7 +191,7 @@ def accept_application(ctx, app_id):
     rent = {r["room_id"]: r["rent"] for r in li["rooms"]}
     shares = [{"member_id": m, "room_id": rid, "rent_share": rent[rid]} for m, rid in zip(members, app["room_ids"])]
 
-    everyone = [m for m in dict.fromkeys(members + market.residents(li)) if market.in_cohort(ctx, m)]
+    everyone = [m for m in dict.fromkeys(members + market.residents(li)) if market.known(ctx, m)]
     if len(everyone) >= 2:
         text, source = llm.house_agreement(market.describe(ctx, everyone))
     else:
@@ -264,10 +278,71 @@ def household(tenancy):
 # ---------------------------------------------------------------------------
 # Listings, reports, admin
 # ---------------------------------------------------------------------------
+def add_housemate(lister_id, name, company, phone):
+    """Someone already living in a listed flat, as the lister entered them: basic
+    details only. The phone number is shown to the lister, never to seekers."""
+    return store.insert("people", {"name": name, "kind": "housemate", "organisation": company, "phone": phone,
+                                   "added_by": lister_id, "created_at": _now()}, prefix="H")
+
+
+def update_housemate(pid, name, company, phone):
+    # Not store.update: its first parameter is also called `name`.
+    def fn(rows):
+        for p in rows:
+            if p["id"] == pid:
+                p.update(name=name, organisation=company, phone=phone)
+    store.mutate("people", fn)
+
+
+def housemates(listing):
+    """People-store rows for the housemates entered on this listing, by room order."""
+    rows = {p["id"]: p for p in store.load("people") if p.get("kind") == "housemate"}
+    return [rows[o] for o in listing.get("occupants", []) if o in rows]
+
+
+def describe_self(person_id, name, answers):
+    """A lister who lives in but hasn't taken the quiz describes their own habits."""
+    answers = {t: int(v) for t, v in answers.items()}
+    if not store.update("people", person_id, answers=answers, described_by=person_id):
+        store.insert("people", {"id": person_id, "name": name, "kind": "lister", "answers": answers,
+                                "described_by": person_id, "created_at": _now()})
+
+
 def create_listing(owner_id, fields):
     """New listing, pending until an admin approves it."""
     row = {"owner_id": owner_id, "status": "pending", "interested": [], "photos": [], "created_at": _now(), **fields}
     return store.insert("listings", row, prefix="L")
+
+
+def update_listing(listing_id, **changes):
+    """The lister's edits. The room count and who lives where don't change here."""
+    return store.update("listings", listing_id, updated_at=_now(), **changes)
+
+
+def delete_listing(listing_id, by):
+    """Delete a listing the lister owns. Refused while someone rents through it.
+    Open applications are declined, and the flat leaves every group's shortlist.
+    Returns None, or the reason it can't be deleted."""
+    li = store.get("listings", listing_id)
+    if not li or li["owner_id"] != by:
+        return "You can only delete your own listings."
+    if any(t["listing_id"] == listing_id for t in store.load("tenancies")):
+        return "People rent through this listing, so it can't be deleted."
+
+    for a in open_applications(listing_id):
+        reject_application(a["id"], "The lister removed this listing.")
+
+    def drop_shortlists(rows):
+        for g in rows:
+            g["shortlist"] = [x for x in g.get("shortlist", []) if x != listing_id]
+            if g.get("anchored_listing_id") == listing_id:
+                g["anchored_listing_id"] = None
+    store.mutate("groups", drop_shortlists)
+
+    hm = {p["id"] for p in housemates(li)}
+    store.mutate("people", lambda rows: [p for p in rows if p["id"] not in hm])
+    store.mutate("listings", lambda rows: [r for r in rows if r["id"] != listing_id])
+    return None
 
 
 def review_listing(listing_id, approve, reason="", by=None):

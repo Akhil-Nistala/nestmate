@@ -51,16 +51,26 @@ HOME_OPTIONS = {
 }
 
 
+def explore_defaults(goal):
+    """Where Explore starts for each Home goal. Only a starting point: the person
+    can change any of it, and their choices are kept for the session."""
+    if goal == "flat":
+        return {"tab": "Flats", "sort": "practical", "share": False}
+    if goal == "flatmates":
+        return {"tab": "People", "sort": "people", "share": True}
+    return {"tab": "Flats", "sort": "people", "share": True}
+
+
 def _choose(goal, has_profile):
     actions.set_goal(me_id(), goal)
-    session.state()["explore"] = {"mode": {"both": "both", "flat": "flat", "flatmates": "people"}.get(goal)}
+    session.state()["explore"] = explore_defaults(goal)
     if goal == "list":
         session.state()["listing_form"] = True
         nav.go("listings")
     if not has_profile:
         session.flash("Answer a few questions first, so we can show who and what fits you.")
         nav.go("onboarding")
-    nav.go("matches" if goal == "flatmates" else "explore")
+    nav.go("explore")
 
 
 def _option(goal, has_profile, primary=False):

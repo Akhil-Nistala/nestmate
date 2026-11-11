@@ -35,10 +35,20 @@ def _clean(df):
 def load_cohort():
     """Seed profiles + any new sign-ups (a sign-up replaces a seed row with the same id)."""
     df = pd.read_csv(PROFILES_CSV)
-    if os.path.exists(SIGNUPS_CSV):
-        new = pd.read_csv(SIGNUPS_CSV)
+    new = _read_signups()
+    if new is not None:
         df = pd.concat([df[~df["id"].isin(new["id"])], new], ignore_index=True)
     return _clean(df)
+
+
+def _read_signups():
+    """signups.csv as a DataFrame, or None if it's missing or empty (an empty
+    file must not take the whole app down)."""
+    try:
+        new = pd.read_csv(SIGNUPS_CSV)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return None
+    return new if "id" in new.columns else None
 
 
 def seed_ids():
@@ -49,11 +59,15 @@ def seed_ids():
 def save_signup(profile: dict):
     """Upsert one new user's profile into signups.csv."""
     row = pd.DataFrame([profile])
-    if os.path.exists(SIGNUPS_CSV):
-        old = pd.read_csv(SIGNUPS_CSV)
+    old = _read_signups()
+    if old is not None:
         old = old[old["id"] != profile["id"]]
         row = pd.concat([old, row], ignore_index=True)
-    row.to_csv(SIGNUPS_CSV, index=False)
+    # WHY write-then-rename: writing in place truncates the file first, so a save
+    # that is interrupted (or read mid-write) left an empty signups.csv.
+    tmp = SIGNUPS_CSV + ".tmp"
+    row.to_csv(tmp, index=False)
+    os.replace(tmp, SIGNUPS_CSV)
 
 
 def dealbreaker_list(value):

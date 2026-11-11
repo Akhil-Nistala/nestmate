@@ -63,7 +63,7 @@ Seed profiles (`data/profiles.csv`) and the LLM cache are never modified by a re
 ## Demo accounts (login page, demo mode only)
 | Button | Account | Story |
 |---|---|---|
-| Looking for a flat and flatmates | Arjun Gupta (U102), quiz done | Flat groups: accept or pass on each person (a pass swaps in the next best fit), then Accept group. In My group, Find flats for us, shortlist Mr. Rao's flat in Gachibowli, apply as a group. After Mr. Rao accepts: pay rent in the mock checkout, add a shared bill. Rahul's spare room shows "You'd live with Rahul". |
+| Looking for a flat and flatmates | Arjun Gupta (U102), quiz done | Explore opens on Flats, sorted by Best people fit: Mr. Rao's flat in Gachibowli is first, with Vamsi interested at 91%. Invite Vamsi, then Apply as a group (on the card or in My group). After Mr. Rao accepts: pay rent in the mock checkout, add a shared bill. Rahul's spare room shows "You'd live with Rahul". Flat groups: accept or pass on each person (a pass swaps in the next best fit). |
 | Renting out a flat | Mr. Rao (O001), landlord, no quiz | My listings: a 3BHK let as rooms, one group application already waiting. Book a visit, accept Arjun's group, see the house agreement and rent collection. |
 | Tenant with a spare room | Rahul Patel (U167) | Listed his spare room in Madhapur; his landlord isn't on the app, so rent goes to the landlord's UPI ID. |
 | HR admin | Priya Nair, hr@deloitte.com / nestmate-hr | Cohort overview, flat groups, people, listings to review (approve L008), flags (a listing 50% below the area average, an account with three listings, a user report), model checks. |
@@ -81,10 +81,10 @@ and one account can search and list.
 |---|---|---|
 | Logged out | `/login`, `/signup` | Log in, sign up, demo accounts |
 | Member | `/home` | Four options (find a flat, find flatmates, both, list a space) and "continue where you left off" |
-| | `/explore` | Flats and who else is interested, flats and rooms (filters), flatmates, or flats for your group; each with a fit score |
+| | `/explore` | Two tabs, Flats and People, with visible filters and settings (see Explore below) |
 | | `/matches` (Flat groups) | The group deck: accept or pass on each person, or on the whole group |
 | | `/group` (My group) | Members, combined budget, shortlisted flats, apply as a group, house agreement once housed |
-| | `/listings` (My listings) | List a space; your listings and their applicants, best fit first; book visits; accept |
+| | `/listings` (My listings) | List a space, including who already lives there (name, company, phone; the phone is shown only to the lister); edit or delete your listings; applicants, best fit first; book visits; accept |
 | | `/rent` | Your share, who has paid, mock checkout, shared bills; or rent collection as a lister |
 | | `/profile`, `/answers` | Profile and AI-read traits; the quiz in edit mode (from the account menu) |
 | | `/onboarding` | The quiz, shown until it's done (people who only list a space start on Home) |
@@ -100,6 +100,34 @@ Passwords are salted PBKDF2 hashes in `data/accounts.json`; the session survives
 refresh via a random session-id cookie.
 
 **Light / dark mode** follows the system setting; the sun/moon button switches it.
+
+## Explore
+Two tabs, **Flats** and **People**, and every difference between views is a setting
+you can see:
+
+- **Searching for**: Just me, or My group (with their names). Only shown when you're
+  in a group, and it starts on the group. In group mode a flat needs a free room for
+  each of you, every room inside the group's shared budget, and house rules and any
+  residents that suit all of you.
+- **Filters**: rent per room, area, rooms or whole flats, max commute. They apply in
+  both sort orders and in group mode.
+- **Sort by**: *Best people fit* puts flats with a people signal first: your fit with
+  the people living there, or for an empty flat, your best match among the people
+  interested in it (50% or more). Flats with no signal follow, by rent and commute.
+  *Rent and commute* ranks by rent against your budget, then commute.
+- **Only flats I can share**: rooms in a shared flat, or whole flats with at least 2
+  free rooms. Switch it off to see flats for one person too.
+
+Every flat card has the same parts: the title, the place in words ("₹13,500 a room,
+20 min to Hitec City, within your budget"), the people line (who you'd live with and
+the clash to talk about; or interested people at 50% or more, with Invite for the top
+one; or "No strong matches interested yet."), then the actions. The score tag is only
+ever people fit, never rent and commute alone.
+
+The Home goal only sets where Explore starts: *Find a flat* opens Flats sorted by rent
+and commute with share-only off; *Find flatmates* opens People; *Find a flat and
+flatmates* opens Flats sorted by people fit with share-only on. Your changes are kept
+for the session.
 
 ## What's simulated
 - **Other members accepting** a group: marked accepted straight away, and labelled.

@@ -10,7 +10,7 @@ house agreement. Template fallbacks are never cached, so just re-run on failure.
 import sys
 import time
 
-from core import llm, market
+from core import llm, market, store
 from core.cluster import run_clustering
 from core.encode import load_cohort
 from core.grouping import build_all, user_deck
@@ -34,7 +34,7 @@ def warm(user_ids):
         deck, _ = user_deck(df, cl, res, uid)
         # Demo story groups this user forms on stage (e.g. Arjun inviting Vamsi):
         # same payload as the group card and the tenancy agreement, so these hit too.
-        ctx = market.make_ctx(df, cl, res)
+        ctx = market.make_ctx(df, cl, res, store.load("people"))
         deck = deck + [market.describe(ctx, members) for members in STORY_GROUPS.get(uid, [])]
         for g in deck:
             jobs += [("explain", llm.explain_group, g), ("areas", llm.suggest_areas, g),

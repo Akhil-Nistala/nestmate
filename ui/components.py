@@ -11,7 +11,7 @@ import html
 
 import streamlit as st
 
-from core import market
+from core import market, store
 from core.cluster import run_clustering
 from core.encode import load_cohort
 from core.evaluate import evaluate
@@ -39,7 +39,7 @@ def engine():
     """(cohort, clustering, results, market context) for the current data."""
     cohort = load_cohort()
     cl, res = compute(cohort)
-    return cohort, cl, res, market.make_ctx(cohort, cl, res)
+    return cohort, cl, res, market.make_ctx(cohort, cl, res, store.load("people"))
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,9 @@ def join_and(items):
 
 
 def first(name):
-    return name.split()[0]
+    """First name, or "" for a blank name (never raises)."""
+    parts = str(name or "").split()
+    return parts[0] if parts else ""
 
 
 def initials(name):

@@ -12,13 +12,17 @@ from datetime import date
 import streamlit as st
 
 from core import actions, market, store
-from core.schema import AREAS, LISTER_TYPES, LISTING_GENDER, LISTING_KINDS, TRAIT_SHORT, VISIT_SLOTS
+from core.schema import (AREAS, LISTER_TYPES, LISTING_GENDER, LISTING_KINDS, MIN_SHOWN_FIT, QUESTIONS,
+                         TRAIT_SHORT,
+                         TRAITS, VISIT_SLOTS)
 from ui import nav, session
 from ui.components import (lc, avatar, chip, empty, engine, esc, first, habit_grid, join_and, key_tag, md, money,
                            month_name, page_head, people_row, src_tag, stats)
-from ui.member_pages import group_card, group_sentence, me_id, my_profile, need_quiz
+from ui.member_pages import explore_defaults, group_card, group_sentence, me_id, my_profile, need_quiz
 
 UPI_RE = re.compile(r"^[\w.\-]{2,}@[A-Za-z]{2,}$")
+# Indian mobile: 10 digits starting 6-9, with an optional +91 / 91 / 0 in front.
+PHONE_RE = re.compile(r"^(?:\+?91|0)?[6-9]\d{9}$")
 
 
 # ---------------------------------------------------------------------------
@@ -59,46 +63,107 @@ def free_chip(li):
 # ---------------------------------------------------------------------------
 # Explore
 # ---------------------------------------------------------------------------
-MODES = {"both": "Flats and people", "flat": "Flats and rooms", "people": "Flatmates",
-         "group": "Flats for your group"}
+SORTS = {"people": "Best people fit", "practical": "Rent and commute"}
+TABS = ["Flats", "People"]
 
 
 def _open(lid):
     session.state()["explore"]["open"] = lid
 
 
-def _result_card(r, uid, names, ctx, show_interest):
+def _place_line(r, as_group):
+    """Rent and commute in plain words. Never a %: rent and commute alone aren't a fit score."""
+    rent = money(r["rent"]) if r["rent"] == r["rent_max"] else f"{money(r['rent'])} to {money(r['rent_max'])}"
+    bits = [f"{rent} a room"]
+    if as_group:
+        bits.append(f"{money(r['rent_total'])} a month for the group")
+        bits.append(f"about {r['minutes']} min average commute")
+        bits.append("within your group's shared budget")
+    else:
+        if r["minutes"] is not None:
+            bits.append(f"{r['minutes']} min to {esc(r['office'])}")
+        over = r["rent"] - r["budget_max"]
+        bits.append("within your budget" if over <= 0 else f"{money(over)} over your budget")
+    line = ", ".join(bits)
+    return line[:1].upper() + line[1:] + "."
+
+
+def _invite(uid, pid, lid, names):
+    actions.create_group(uid, [pid], 2, anchored_listing_id=lid)
+    session.flash(f"You and {first(names(pid))} are now a group, with this flat on your shortlist. "
+                  f"{first(names(pid))} accepting is simulated in the demo. Apply as a group from here.")
+    session.state()["explore"].pop("open", None)
+    nav.go("group")
+
+
+def _apply_group(g, li, names):
+    actions.shortlist(g["id"], li["id"])
+    a, err = actions.apply(li["id"], g["member_ids"], group_id=g["id"])
+    if err:
+        st.error(err)
+        return
+    session.flash(f"Applied as a group for rooms {', '.join(a['room_ids'])}. "
+                  f"{first(names(li['owner_id']))} will see your group's fit.")
+    nav.go("group")
+
+
+def _result_card(r, uid, names, g, as_group):
+    """Same parts on every card: title, place line, people line, actions.
+    The key tag (the one score on a card) is only ever people fit."""
     li = r["listing"]
-    rf = r["room_fit"]
-    basis = "Fit with the people living there"
-    tag = key_tag(r["score"], title=basis) if rf else chip(*r["label"])
-    office = (market.person(ctx, uid) or {}).get("office_location", "")
-    lines = f"Rooms from {money(r['rent'])} each, {r['minutes']} min to your office in {esc(office)}. {rules_sentence(li)}"
-    extra = ""
-    if rf:
-        live = join_and(esc(first(names(o))) for o, _ in rf["with"])
-        extra += f"<p class='card-p'>You'd live with {live}.</p>"
-        low = rf["lowest"]
+    ppl = r["people"]
+    tag, people_line, invite = "", "", None
+    if ppl and ppl["kind"] == "group":
+        live = [o for o, _ in ppl["with"]]
+        if live:
+            people_line = f"Your group would live with {join_and(esc(first(names(o))) for o in live)}."
+            tag = key_tag(ppl["score"], title="Group fit, with the people living there")
+        else:
+            people_line = "Nobody lives here yet. The score is your group's fit with each other."
+            tag = key_tag(ppl["score"], title="Your group's fit")
+    elif ppl:
+        people_line = f"You'd live with {join_and(esc(first(names(o))) for o, _ in ppl['with'])}."
+        tag = key_tag(ppl["score"], title="Fit with the people living there")
+        low = ppl["lowest"]
         if low and low[2]:
             t, mine, theirs = low[2]
-            extra += (f"<p class='warnline'>You and {esc(first(names(low[0])))} differ on {TRAIT_SHORT[t]}: "
-                      f"you said {esc(lc(mine))}, {esc(first(names(low[0])))} said {esc(lc(theirs))}.</p>")
-    if show_interest and r["interested"]:
-        n = len(r["interested"])
-        faces = "".join(f"<span class='face'>{avatar(names(p))}<span>{esc(first(names(p)))}"
-                        f"{f' <b>{s:.0f}%</b>' if s is not None else ''}</span></span>"
-                        for p, s in r["interested"][:4])
-        extra += (f"<p class='card-p strong'>{n} {'person' if n == 1 else 'people'} "
-                  f"{'is' if n == 1 else 'are'} interested</p><div class='faces'>{faces}</div>")
+            who = esc(first(names(low[0])))
+            people_line += (f"</p><p class='warnline'>You and {who} differ on {TRAIT_SHORT[t]}: you said "
+                            f"{esc(lc(mine))}, {who} said {esc(lc(theirs))}.")
+    else:
+        shown = [(p, s) for p, s in r["interested"] if s is not None and s >= MIN_SHOWN_FIT]
+        if shown:
+            people_line = "Interested: " + ", ".join(f"{esc(first(names(p)))} {s:.0f}%" for p, s in shown[:4]) + "."
+            invite = shown[0][0] if not g else None
+        else:
+            people_line = "No strong matches interested yet."
     with st.container(key=f"res-{li['id']}"):
         md(f"""<div class='card-head'><div class='ch-main'>
               <h2 class='card-h'>{listing_title(li)} {free_chip(li)}</h2>
-              <p class='card-p'>{lines}</p>{extra}</div>
+              <p class='card-p'>{_place_line(r, as_group)} {rules_sentence(li)}</p>
+              <p class='card-p strong'>{people_line}</p></div>
               {tag}</div>""")
-        st.button("Open this flat", key=f"open-{li['id']}", on_click=_open, args=(li["id"],))
+        with st.container(horizontal=True, gap="small", key=f"resact-{li['id']}"):
+            st.button("Open", key=f"open-{li['id']}", on_click=_open, args=(li["id"],))
+            if invite and st.button(f"Invite {first(names(invite))}", key=f"invite-{li['id']}", type="primary"):
+                _invite(uid, invite, li["id"], names)
+            if as_group:
+                applied = next((a for a in actions.open_applications(li["id"]) if a.get("group_id") == g["id"]), None)
+                if li["id"] in g["shortlist"]:
+                    md(f"<p class='fine inline'>{chip('Shortlisted', 'ok')}</p>")
+                    if not applied and st.button("Remove", key=f"unshort-{li['id']}", type="tertiary"):
+                        actions.unshortlist(g["id"], li["id"])
+                        st.rerun()
+                elif st.button("Save to shortlist", key=f"short-{li['id']}"):
+                    actions.shortlist(g["id"], li["id"])
+                    st.rerun()
+                if applied:
+                    md(chip("Your group has applied", "ok"))
+                elif st.button("Apply as a group", key=f"gapply-{li['id']}", type="primary"):
+                    _apply_group(g, li, names)
 
 
-def _people_mode(ctx, uid, names):
+def _people_tab(ctx, uid, names):
     people = market.people_results(ctx, uid)
     if not people:
         empty("Nobody fits your dealbreakers yet", "Try a wider budget or fewer dealbreakers in Your answers.")
@@ -121,49 +186,48 @@ def _people_mode(ctx, uid, names):
             md(habit_grid([me, p], uid))
 
 
-def _group_mode(ctx, uid, names, listings):
-    g = actions.my_group(uid)
-    if not g:
-        empty("You don't have a group yet", "Accept a group in Flat groups, then come back here.")
-        return
-    results = market.group_results(ctx, g["member_ids"], listings)
-    lo, hi = market.shared_budget(ctx, g["member_ids"])
-    md(f"<p class='lede'>Flats with {len(g['member_ids'])} free rooms, each inside your group's shared budget of "
-       f"{money(lo)}–{hi:,}, where the house rules and the people already living there suit all of you.</p>")
-    if not results:
-        empty("No flat fits the whole group yet", "New flats are listed every week. Try Flats and rooms to see "
-              "everything, or ask your group about a wider budget.")
-        return
-    for r in results:
-        li = r["listing"]
-        with st.container(key=f"gres-{li['id']}"):
-            who = "the group and the people already living there" if r["with_residents"] else "your group"
-            rooms = ", ".join(f"{x['room_id']} {money(x['rent'])}" for x in r["rooms"])
-            md(f"""<div class='card-head'><div class='ch-main'>
-                  <h2 class='card-h'>{listing_title(li)} {free_chip(li)}</h2>
-                  <p class='card-p'>Rooms {rooms}. {money(r['rent_total'])} a month for the group, about
-                  {r['minutes']} min average commute. {rules_sentence(li)}</p></div>
-                  {key_tag(r['score'], title='Group fit of ' + who)}</div>
-                  <p class='fine'>Group fit of {who}.</p>""")
-            with st.container(horizontal=True, gap="small"):
-                st.button("Open this flat", key=f"gopen-{li['id']}", on_click=_open, args=(li["id"],))
-                if li["id"] in g["shortlist"]:
-                    md(f"<p class='fine inline'>{chip('Shortlisted', 'ok')}</p>")
-                elif st.button("Shortlist for the group", key=f"short-{li['id']}"):
-                    actions.shortlist(g["id"], li["id"])
-                    st.rerun()
-
-
-def _flat_filters(me):
+def _flat_settings(state, budget_max, as_group):
+    """Filters, sort and the share-only switch. Choices are kept for the session."""
+    f = state.setdefault("filters", {})
+    who = "group" if as_group else "me"
     with st.container(key="filters", horizontal=True, gap="medium"):
-        budget = st.slider("Rent per room (₹)", 5000, 25000, (5000, int(me["budget_max"])), step=500,
-                           key="f-budget")
-        areas = st.multiselect("Areas", [a["area"] for a in AREAS], placeholder="Any area", key="f-areas")
+        hi = int(min(25000, max(5500, budget_max)))
+        budget = st.slider("Rent per room (₹)", 5000, 25000, tuple(f.get(f"budget-{who}", (5000, hi))), step=500,
+                           key=f"f-budget-{who}")
+        areas = st.multiselect("Areas", [a["area"] for a in AREAS], default=f.get("areas", []),
+                               placeholder="Any area", key="f-areas")
         kind = st.pills("Type", ["room", "whole_flat"], format_func={"room": "Rooms", "whole_flat": "Whole flats"}.get,
-                        key="f-kind")
-        commute = st.select_slider("Max commute", [10, 15, 20, 25, 30, 45], value=45,
+                        default=f.get("kind"), key="f-kind")
+        commute = st.select_slider("Max commute", [10, 15, 20, 25, 30, 45], value=f.get("commute", 45),
                                    format_func=lambda m: f"{m} min", key="f-commute")
-    return {"budget": budget, "areas": areas or None, "kind": kind, "max_commute": commute}
+    f.update({f"budget-{who}": budget, "areas": areas, "kind": kind, "commute": commute})
+    with st.container(key="sortbar", horizontal=True, gap="medium", vertical_alignment="center"):
+        sort = st.segmented_control("Sort by", list(SORTS), format_func=SORTS.get, default=state["sort"],
+                                    key="ex-sort") or state["sort"]
+        share = state["share"]
+        if not as_group:
+            share = st.checkbox("Only flats I can share", share, key="ex-share",
+                                help="Rooms in a shared flat, or whole flats with at least 2 free rooms.")
+    state["sort"], state["share"] = sort, share
+    return {"budget": budget, "areas": areas or None, "kind": kind, "max_commute": commute, "sort": sort,
+            "shareable_only": share}
+
+
+def _flats_tab(ctx, uid, names, me, g, as_group, state):
+    budget_max = market.shared_budget(ctx, g["member_ids"])[1] if as_group else int(me["budget_max"])
+    settings = _flat_settings(state, budget_max, as_group)
+    results = market.flat_results(ctx, uid, store.load("listings"), members=g["member_ids"] if as_group else None,
+                                  **settings)
+    if as_group:
+        lo, hi = market.shared_budget(ctx, g["member_ids"])
+        md(f"<p class='fine'>Flats with a free room for each of you, inside your group's shared budget of "
+           f"{money(lo)}–{hi:,} a room, where the house rules and anyone living there suit all of you.</p>")
+    if not results:
+        empty("No flats match", "Widen the rent or commute, pick more areas, or switch off Only flats I can share.")
+        return
+    md(f"<p class='fine'>{len(results)} flat{'s' if len(results) != 1 else ''}</p>")
+    for r in results:
+        _result_card(r, uid, names, g, as_group)
 
 
 def explore_page():
@@ -174,36 +238,29 @@ def explore_page():
     state = session.state()["explore"]
     if state.get("open"):
         return listing_detail(state["open"], uid, names, ctx, cohort)
-    page_head("Explore", "Flats, rooms and people, ranked by how well they fit you.")
+    page_head("Explore", "Flats and people, ranked by how well they fit you.")
     if me is None:
         need_quiz("Explore")
         return
-    goal = actions.get_goal(uid)
-    default = state.get("mode") or {"flat": "flat", "flatmates": "people"}.get(goal, "both")
-    modes = list(MODES) if actions.my_group(uid) else [m for m in MODES if m != "group"]
-    if default not in modes:
-        default = "both"
-    mode = st.segmented_control("Show", modes, format_func=MODES.get, default=default, key="explore-mode",
-                                label_visibility="collapsed") or default
-    state["mode"] = mode
-    listings = store.load("listings")
-    if mode == "people":
-        return _people_mode(ctx, uid, names)
-    if mode == "group":
-        return _group_mode(ctx, uid, names, listings)
-    if mode == "flat":
-        f = _flat_filters(me)
-        results = market.flat_results(ctx, uid, listings, **f)
-    else:
-        md("<p class='lede'>Flats with free rooms, and who else is interested in each.</p>")
-        results = [r for r in market.flat_results(ctx, uid, listings, rank="people") if r["listing"]["kind"] == "room"
-                   or len(market.free_rooms(r["listing"])) >= 2]
-    if not results:
-        empty("No flats match", "Widen the budget or commute, or pick more areas.")
-        return
-    md(f"<p class='fine'>{len(results)} flat{'s' if len(results) != 1 else ''}</p>")
-    for r in results:
-        _result_card(r, uid, names, ctx, show_interest=(mode == "both"))
+    for k, v in explore_defaults(actions.get_goal(uid)).items():
+        state.setdefault(k, v)
+    g = actions.my_group(uid)
+    as_group = False
+    if g:
+        others = join_and(first(names(m)) for m in g["member_ids"] if m != uid)
+        state.setdefault("who", "group")
+        who = st.segmented_control("Searching for", ["me", "group"], default=state["who"], key="ex-who",
+                                   format_func={"me": "Just me", "group": f"My group ({others})"}.get) or state["who"]
+        state["who"] = who
+        as_group = who == "group"
+    flats, people = st.tabs(TABS, default=state["tab"], key="ex-tab", on_change="rerun")
+    state["tab"] = st.session_state.get("ex-tab") or state["tab"]
+    if flats.open:
+        with flats:
+            _flats_tab(ctx, uid, names, me, g, as_group, state)
+    if people.open:
+        with people:
+            _people_tab(ctx, uid, names)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +292,7 @@ def listing_detail(lid, uid, names, ctx, cohort):
         for r in li["rooms"]:
             who = r.get("occupied_by")
             status = esc(names(who)) if who else chip("Free", "ok")
-            rent = money(r["rent"]) if r["rent"] else "Owner's room"
+            rent = money(r["rent"]) if r["rent"] else ("Owner's room" if who == li["owner_id"] else "Taken")
             rows += (f"<tr><td>{r['room_id']}</td><td class='num'>{rent}</td>"
                      f"<td>{'Attached bath' if r['attached_bath'] else 'Shared bath'}, "
                      f"{'furnished' if r['furnished'] else 'unfurnished'}</td><td>{status}</td></tr>")
@@ -246,17 +303,22 @@ def listing_detail(lid, uid, names, ctx, cohort):
            f"Available from {date.fromisoformat(li['available_from']).strftime('%d %B %Y').lstrip('0')}. "
            f"House rules: {rules_sentence(li)}</p></div>")
         if rf and me:
-            live = [market.person(ctx, o) for o, _ in rf["with"]]
+            live = [market.profile(ctx, o) for o, _ in rf["with"]]
             md(f"<div class='panel'><h3 class='panel-h'>You'd live with {join_and(esc(first(p['name'])) for p in live)}</h3>"
-               + habit_grid([me] + live, uid) + "</div>")
+               + habit_grid([me] + live, uid) + described_note(live, ctx, names) + "</div>")
             low = rf["lowest"]
             if low and low[2]:
                 t, mine, theirs = low[2]
                 st.warning(f"You and {first(names(low[0]))} differ on {TRAIT_SHORT[t]}: you said {lc(mine)}, "
                            f"{first(names(low[0]))} said {lc(theirs)}. Worth talking about before you move in.",
                            icon=":material/info:")
-        elif any(not market.in_cohort(ctx, o) for o in market.residents(li)):
-            md("<p class='fine'>The owner lives here too. They haven't answered the lifestyle questions.</p>")
+        unknown = [o for o in market.residents(li) if o != uid and not market.known(ctx, o)]
+        if unknown:
+            many = len(unknown) > 1
+            company = {p["id"]: p.get("organisation") for p in actions.housemates(li)}
+            who = join_and(esc(names(o)) + (f" ({esc(company[o])})" if company.get(o) else "") for o in unknown)
+            md(f"<p class='fine'>{who} {'live' if many else 'lives'} here too. They aren't on Nestmate, so they "
+               "aren't in the fit score. Ask about them on the visit.</p>")
     with right:
         g = actions.my_group(uid)
         interested = market.interested_people(ctx, uid, li)
@@ -291,6 +353,10 @@ def listing_detail(lid, uid, names, ctx, cohort):
                                       f"{first(names(li['owner_id']))} will see your group's fit.")
                         session.state()["explore"].pop("open", None)
                         nav.go("group")
+                if not app and st.button("Remove from shortlist", key="unshort", type="tertiary"):
+                    actions.unshortlist(g["id"], lid)
+                    session.flash("Removed from your group's shortlist.")
+                    st.rerun()
                 if st.button("Go to my group"):
                     nav.go("group")
             elif g and len(free) >= len(g["member_ids"]):
@@ -342,7 +408,9 @@ def tenancy_block(t, uid, names, key):
 
 
 def _find_flats():
-    session.state()["explore"] = {"mode": "group"}
+    state = session.state()["explore"]
+    state.pop("open", None)
+    state.update(tab="Flats", who="group")
 
 
 def group_page():
@@ -367,7 +435,7 @@ def group_page():
     page_head(f"Your {len(g['member_ids'])}-person group", group_sentence(d) + f" {chip(text, kind)}")
     with st.container(key="group-card"):
         group_card(d, uid)
-        md(people_row([market.person(ctx, m) for m in g["member_ids"]], uid,
+        md(people_row([market.person(ctx, m) or {"id": m, "name": names(m)} for m in g["member_ids"]], uid,
                       note=lambda p: chip("Accepted, simulated", "") if p["id"] != uid else ""))
 
     listings = {li["id"]: li for li in store.load("listings")}
@@ -402,7 +470,12 @@ def group_page():
                 md(chip(esc(label), "ok" if app["status"] != "sent" else "warn"))
             elif not enough:
                 md(chip("Not enough free rooms", "warn"))
-            elif st.button("Apply as a group", type="primary", key=f"apply-{li['id']}"):
+            if not app and st.button("Remove", key=f"unshort-{li['id']}", type="tertiary",
+                                     help="Take this flat off the group's shortlist"):
+                actions.unshortlist(g["id"], li["id"])
+                session.flash("Removed from your group's shortlist.")
+                st.rerun()
+            if not app and enough and st.button("Apply as a group", type="primary", key=f"apply-{li['id']}"):
                 a, err = actions.apply(li["id"], g["member_ids"], group_id=g["id"])
                 if err:
                     st.error(err)
@@ -412,7 +485,8 @@ def group_page():
                     st.rerun()
     rejected = [a for a in apps if a["status"] == "rejected"]
     for a in rejected:
-        md(f"<p class='fine'>{listing_title(listings[a['listing_id']])}: declined. {esc(a.get('reason', ''))}</p>")
+        title = listing_title(listings[a["listing_id"]]) if a["listing_id"] in listings else "A flat you applied for"
+        md(f"<p class='fine'>{title}: declined. {esc(a.get('reason', ''))}</p>")
     with st.container(horizontal=True, gap="small", key="group-actions"):
         if st.button("Find flats for us", type="primary", icon=":material/search:"):
             _find_flats()
@@ -426,7 +500,62 @@ def group_page():
 # ---------------------------------------------------------------------------
 # My listings
 # ---------------------------------------------------------------------------
-def _listing_form(uid, names):
+def habit_inputs(key):
+    """Every quiz habit as a dropdown, nothing pre-picked. Returns {trait: answer or None}.
+    WHY every trait: a described flatmate is scored with the same formula as
+    everyone else, which needs all the answers."""
+    cols = st.columns(3, gap="small")
+    out = {}
+    for k, t in enumerate(TRAITS):
+        opts = QUESTIONS[t]["options"]
+        out[t] = cols[k % 3].selectbox(TRAIT_SHORT[t].capitalize(), list(opts), index=None, format_func=opts.get,
+                                       placeholder="Choose", key=f"{key}-{t}")
+    return out
+
+
+def housemate_fields(key, i, current=None):
+    """Name, company and phone for one person already living in the flat."""
+    current = current or {}
+    c1, c2, c3 = st.columns([3, 3, 2], gap="small")
+    name = c1.text_input(f"Flatmate {i + 1}'s name", current.get("name", ""), key=f"{key}-name-{i}")
+    company = c2.text_input("Company or college", current.get("organisation", ""), key=f"{key}-org-{i}")
+    phone = c3.text_input("Phone", current.get("phone", ""), placeholder="98xxxxxxxx", key=f"{key}-phone-{i}")
+    return {"name": name.strip(), "company": company.strip(), "phone": phone.strip()}
+
+
+def housemate_error(hs):
+    """First problem with the entered flatmates, or None."""
+    for i, h in enumerate(hs, 1):
+        if not h["name"]:
+            return f"Add flatmate {i}'s name."
+        if not h["company"]:
+            return f"Add where {first(h['name'])} works or studies."
+        if not PHONE_RE.match(re.sub(r"[\s-]", "", h["phone"])):
+            return f"Enter a 10-digit mobile number for {first(h['name'])}."
+    return None
+
+
+def _housemate_inputs(most):
+    """Current flatmates: basic details only. Seekers see name and company; only you see the phone."""
+    md("<h3 class='panel-h'>Who else lives here?</h3><p class='hint'>Add the people already living in the flat. "
+       "People looking at the room see their name and company. Only you see their phone number.</p>")
+    n = st.segmented_control("Other people living here", list(range(most + 1)), default=0, key="lf-nocc") or 0
+    return [housemate_fields("lf-hm", i) for i in range(n)]
+
+
+def described_note(people, ctx, names):
+    """Says whose habits were described by someone else, so seekers know how much to trust them."""
+    notes = []
+    for p in people:
+        if not market.is_described(ctx, p["id"]):
+            continue
+        by = p.get("described_by")
+        notes.append(f"{esc(first(p['name']))} described their own habits" if by == p["id"] else
+                     f"{esc(first(p['name']))}'s habits were described by {esc(first(names(by)))}")
+    return f"<p class='fine'>{join_and(notes)}. They haven't taken the quiz.</p>" if notes else ""
+
+
+def _listing_form(uid, names, ctx):
     with st.container(key="listing-form"):
         md("<h2 class='step-h'>List a space</h2>")
         kind = st.pills("What are you listing?", list(LISTING_KINDS), format_func=LISTING_KINDS.get, key="lf-kind")
@@ -471,6 +600,15 @@ def _listing_form(uid, names):
                                         help="Your new flatmate pays their rent share straight to this ID.")
             rooms.insert(0, {"rent": int(own), "attached_bath": True, "furnished": True, "occupied_by": uid})
             md("<p class='hint'>You live here, so people looking at this room see how well they'd fit with you.</p>")
+        self_answers, housemates = None, []
+        if kind == "room":
+            if lives_there and not market.known(ctx, uid):
+                md("<h3 class='panel-h'>About you</h3><p class='hint'>You haven't taken the lifestyle quiz. "
+                   "Tell people how you live, so they can see how well they'd fit with you.</p>")
+                self_answers = habit_inputs("lf-me")
+            others_max = bhk - n_let - (1 if lives_there else 0)
+            if others_max > 0:
+                housemates = _housemate_inputs(others_max)
         c1, c2 = st.columns(2, gap="medium")
         deposit = c1.segmented_control("Deposit", [1, 2, 3], format_func=lambda n: f"{n} month{'s' if n > 1 else ''}",
                                        default=2, key="lf-dep") or 2
@@ -486,9 +624,22 @@ def _listing_form(uid, names):
             if not hint.strip():
                 st.error("Add a rough location, like a landmark, so people can judge the commute.")
                 return
+            if self_answers is not None and None in self_answers.values():
+                st.error("Answer every habit question in About you.")
+                return
+            err = housemate_error(housemates)
+            if err:
+                st.error(err)
+                return
             if not landlord_on_app and not UPI_RE.match(upi.strip()):
                 st.error("Enter the landlord's UPI ID, like name@bank, so your flatmate can pay rent.")
                 return
+            if self_answers is not None:
+                actions.describe_self(uid, names(uid), self_answers)
+            housemate_ids = [actions.add_housemate(uid, h["name"], h["company"], h["phone"])["id"]
+                             for h in housemates]
+            rooms += [{"rent": 0, "attached_bath": False, "furnished": True, "occupied_by": hid}
+                      for hid in housemate_ids]
             for i, r in enumerate(rooms, 1):
                 r["room_id"] = f"R{i}"
             nearest = min(next(a for a in AREAS if a["area"] == area)["commute"].items(), key=lambda x: (x[1], x[0]))[0]
@@ -498,7 +649,7 @@ def _listing_form(uid, names):
                 "deposit_months": deposit, "available_from": avail.isoformat(),
                 "rules": {"gender": gender, "veg_only": veg, "no_smoking": nosmoke, "no_drinking": nodrink,
                           "guests_ok": guests},
-                "occupants": [uid] if lives_there else [], "landlord_on_app": landlord_on_app,
+                "occupants": ([uid] if lives_there else []) + housemate_ids, "landlord_on_app": landlord_on_app,
                 "landlord_upi": upi.strip()})
             session.state()["listing_form"] = False
             session.flash(f"Sent {li['id']} for review. It shows in Explore once an admin approves it.")
@@ -523,8 +674,8 @@ def _application_card(a, li, ctx, names, uid):
               <p class='card-p'>{kind.capitalize()}.</p>
               <ul class='reasons'>{reasons}</ul>{clash}</div>
               {tag}</div>""")
-        known = [market.person(ctx, m) for m in dict.fromkeys(members + market.residents(li))
-                 if market.in_cohort(ctx, m)]
+        known = [market.profile(ctx, m) for m in dict.fromkeys(members + market.residents(li))
+                 if market.known(ctx, m)]
         if len(known) >= 2:
             md(habit_grid(known))
         if a["status"] in ("sent", "visit_booked"):
@@ -550,6 +701,71 @@ def _application_card(a, li, ctx, names, uid):
                     st.rerun()
 
 
+def _edit_form(li, hm):
+    """Edit a listing's details. The size and which rooms exist stay fixed, so
+    applications and tenancies keep pointing at the right rooms."""
+    k = f"ed-{li['id']}"
+    with st.container(border=True, key=k):
+        md("<h3 class='panel-h'>Edit listing</h3><p class='hint'>To change the size or the number of rooms, "
+           "delete this listing and list it again.</p>")
+        hint = st.text_input("Where exactly, roughly", li["address_hint"], key=f"{k}-hint")
+        free = market.free_rooms(li)
+        rooms = {}
+        if free:
+            md("<p class='hint'>Free rooms</p>")
+        for r in free:
+            c1, c2, c3 = st.columns([2, 1, 1], gap="small", vertical_alignment="bottom")
+            rooms[r["room_id"]] = {
+                "rent": int(c1.number_input(f"Room {r['room_id']} rent (₹ a month)", 2000, 60000, int(r["rent"]),
+                                            step=500, key=f"{k}-rent-{r['room_id']}")),
+                "attached_bath": c2.checkbox("Attached bath", r["attached_bath"], key=f"{k}-bath-{r['room_id']}"),
+                "furnished": c3.checkbox("Furnished", r["furnished"], key=f"{k}-furn-{r['room_id']}")}
+        people = list(hm.values())
+        if people:
+            md("<p class='hint'>People living here</p>")
+        edited = [housemate_fields(k, i, p) for i, p in enumerate(people)]
+        upi = li.get("landlord_upi", "")
+        if li["lister_type"] == "tenant_spare_room" and not li.get("landlord_on_app"):
+            upi = st.text_input("Landlord's UPI ID", upi, key=f"{k}-upi")
+        c1, c2 = st.columns(2, gap="medium")
+        deposit = c1.segmented_control("Deposit", [1, 2, 3], format_func=lambda n: f"{n} month{'s' if n > 1 else ''}",
+                                       default=li["deposit_months"], key=f"{k}-dep") or li["deposit_months"]
+        avail = c2.date_input("Available from", date.fromisoformat(li["available_from"]), key=f"{k}-date")
+        r0 = li["rules"]
+        gender = st.pills("Who can live here?", list(LISTING_GENDER), format_func=LISTING_GENDER.get,
+                          default=r0.get("gender", "any"), key=f"{k}-gender") or "any"
+        with st.container(horizontal=True, gap="medium"):
+            veg = st.checkbox("Veg-only kitchen", r0.get("veg_only", False), key=f"{k}-veg")
+            nosmoke = st.checkbox("No smoking", r0.get("no_smoking", False), key=f"{k}-smoke")
+            nodrink = st.checkbox("No drinking", r0.get("no_drinking", False), key=f"{k}-drink")
+            guests = st.checkbox("Guests welcome", r0.get("guests_ok", True), key=f"{k}-guests")
+        with st.container(horizontal=True, gap="small"):
+            if st.button("Save changes", type="primary", key=f"{k}-save"):
+                if not hint.strip():
+                    st.error("Add a rough location, like a landmark, so people can judge the commute.")
+                    return
+                err = housemate_error(edited)
+                if err:
+                    st.error(err)
+                    return
+                if upi != li.get("landlord_upi", "") and not UPI_RE.match(upi.strip()):
+                    st.error("Enter the landlord's UPI ID, like name@bank, so your flatmate can pay rent.")
+                    return
+                new_rooms = [{**r, **rooms.get(r["room_id"], {})} for r in li["rooms"]]
+                actions.update_listing(li["id"], address_hint=hint.strip(), rooms=new_rooms, deposit_months=deposit,
+                                       available_from=avail.isoformat(), landlord_upi=upi.strip(),
+                                       rules={"gender": gender, "veg_only": veg, "no_smoking": nosmoke,
+                                              "no_drinking": nodrink, "guests_ok": guests})
+                for p, h in zip(people, edited):
+                    actions.update_housemate(p["id"], h["name"], h["company"], h["phone"])
+                session.state().pop("editing", None)
+                session.flash(f"Saved your changes to {li['id']}.")
+                st.rerun()
+            if st.button("Cancel", type="tertiary", key=f"{k}-cancel"):
+                session.state().pop("editing", None)
+                st.rerun()
+
+
 def listings_page():
     cohort, cl, res, ctx = engine()
     uid = me_id()
@@ -562,7 +778,7 @@ def listings_page():
             session.state()["listing_form"] = True
             st.rerun()
     else:
-        _listing_form(uid, names)
+        _listing_form(uid, names, ctx)
         if mine and st.button("Close the form", type="tertiary"):
             session.state()["listing_form"] = False
             st.rerun()
@@ -581,11 +797,40 @@ def listings_page():
                f"rooms free. {len(li.get('interested', []))} interested, {len(open_apps)} "
                f"application{'s' if len(open_apps) != 1 else ''} waiting.</p>"
                + (f"<p class='warnline'>Reason: {esc(li['review_reason'])}</p>" if li.get("review_reason") else ""))
-            rows = "".join(f"<tr><td>{r['room_id']}</td><td class='num'>{money(r['rent']) if r['rent'] else 'Yours'}</td>"
-                           f"<td>{esc(names(r['occupied_by'])) if r.get('occupied_by') else chip('Free', 'ok')}</td></tr>"
-                           for r in li["rooms"])
+            hm = {p["id"]: p for p in actions.housemates(li)}
+
+            def who(r):
+                o = r.get("occupied_by")
+                if not o:
+                    return chip("Free", "ok")
+                if o in hm:
+                    p = hm[o]
+                    return f"{esc(p['name'])}, {esc(p.get('organisation', ''))} · {esc(p.get('phone', ''))}"
+                return esc(names(o))
+
+            rows = "".join(f"<tr><td>{r['room_id']}</td><td class='num'>"
+                           f"{money(r['rent']) if r['rent'] else ('Yours' if r.get('occupied_by') == uid else 'Taken')}"
+                           f"</td><td>{who(r)}</td></tr>" for r in li["rooms"])
             md(f"<div class='grid-wrap'><table class='list'><thead><tr><th>Room</th><th class='num'>Rent</th>"
                f"<th>Who's there</th></tr></thead><tbody>{rows}</tbody></table></div>")
+            editing = session.state().get("editing") == li["id"]
+            with st.container(horizontal=True, gap="small", key=f"mylist-act-{li['id']}"):
+                if not editing and st.button("Edit", icon=":material/edit:", key=f"edit-{li['id']}"):
+                    session.state()["editing"] = li["id"]
+                    st.rerun()
+                with st.popover("Delete", icon=":material/delete:"):
+                    md(f"<p class='card-p'>Delete {listing_title(li)}? This can't be undone. Open applications are "
+                       "declined and it leaves every group's shortlist.</p>")
+                    if st.button("Delete listing", type="primary", key=f"del-{li['id']}"):
+                        err = actions.delete_listing(li["id"], uid)
+                        if err:
+                            st.error(err)
+                        else:
+                            session.state().pop("editing", None)
+                            session.flash(f"Deleted {li['id']}.")
+                            st.rerun()
+            if editing:
+                _edit_form(li, hm)
         order = sorted(mine_apps, key=lambda a: (a["status"] not in ("sent", "visit_booked"),
                                                  -(lambda v: v["score"] or v.get("rank") or 0)(market.applicant_view(ctx, li, actions.applicants_of(a)))))
         if order:

@@ -10,7 +10,10 @@ What it sets up, so each demo account has a story:
   - Rahul Patel (U167) rents a 2BHK in Madhapur and lists his spare room; his
     landlord is not on the app, so rent goes to the landlord's UPI ID.
   - Arjun Gupta (U102) has picked "Find a flat and flatmates"; Vamsi Das (U082),
-    his best fit in the cohort, is interested in Mr. Rao's flat.
+    his best fit in the cohort, is interested in Mr. Rao's flat. With Best people
+    fit and Only flats I can share, Mr. Rao's flat is first in Explore for Arjun.
+  - Meera Joshi (O006) lists a 1BHK in Madhapur, for one person: switching off
+    Only flats I can share is what makes it appear.
   - Rents follow the area table in core/schema.py. One pending listing is priced
     50% below its area average, and its owner has three listings, so the admin
     Flags page has real evidence to show. One listing has a user report.
@@ -40,14 +43,19 @@ ARJUN, VAMSI, RAHUL, MR_RAO = "U102", "U082", "U167", "O001"
 PEOPLE = [
     {"id": "O001", "name": "Srinivas Rao", "email": "srinivas.rao@example.com", "kind": "landlord",
      "gender": "Male", "seeded": True},
+    # Lives in L003 and described her own habits on the listing form (no quiz).
     {"id": "O002", "name": "Lakshmi Iyer", "email": "lakshmi.iyer@example.com", "kind": "landlord",
-     "gender": "Female", "seeded": True},
+     "gender": "Female", "seeded": True, "described_by": "O002",
+     "answers": {"sleep_time": 1, "wake_time": 1, "cleanliness": 5, "noise_tolerance": 2, "guests_frequency": 2,
+                 "food": 1, "cooking": 3, "smoking": 1, "drinking": 1, "work_mode": 3, "social_level": 3}},
     {"id": "O003", "name": "Kiran Kumar", "email": "kiran.kumar@example.com", "kind": "landlord",
      "gender": "Male", "seeded": True},
     {"id": "O004", "name": "Sunita Reddy", "email": "sunita.reddy@example.com", "kind": "landlord",
      "gender": "Female", "seeded": True},
     {"id": "O005", "name": "Venkat Naidu", "email": "venkat.naidu@example.com", "kind": "landlord",
      "gender": "Male", "seeded": True},
+    {"id": "O006", "name": "Meera Joshi", "email": "meera.joshi@example.com", "kind": "landlord",
+     "gender": "Female", "seeded": True},
 ]
 
 OPEN = {"gender": "any", "veg_only": False, "no_smoking": False, "no_drinking": False, "guests_ok": True}
@@ -121,6 +129,10 @@ def build(df):
                 rooms((8500, True, False, seri_tenant), (8000, False, False, None)), occupants=[seri_tenant]),
         listing("L012", "O002", "whole_flat", "owner_away", "Kothaguda", "Kothaguda crossroads, new building", 2,
                 rooms((11500, True, True, None), (11000, True, True, None))),
+        # A 1BHK for one person: the flat "Only flats I can share" hides. Last in the
+        # list, so the random interested picks for L001-L012 stay the same.
+        listing("L013", "O006", "whole_flat", "owner_away", "Madhapur", "Near Madhapur metro, 4th floor", 1,
+                rooms((16000, True, True, None),)),
     ]
 
     # Interested people: compatible with the flat's rules and residents, rent in
