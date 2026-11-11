@@ -1,251 +1,283 @@
 """
-Member (client) routes: onboarding quiz, matches, my flat, profile, preferences.
+Member routes that are about YOU: home, flat groups (the deck), profile and
+the lifestyle quiz (onboarding and "Your answers").
 
 Members never see cohort-wide statistics or other people's data beyond the
-groups suggested to them. That view belongs to the admin route.
+people suggested to them or interested in the same flat. That view belongs
+to the admin routes. Marketplace routes (explore, group, listings, rent) are
+in ui/market_pages.py.
 """
 import streamlit as st
 
-from core import llm
-from core.encode import dealbreaker_list, load_cohort, save_signup
-from core.grouping import user_deck
-from core.schema import (BUDGET_MAX, BUDGET_MIN, DEALBREAKERS, FLAT_SIZES, GENDER_MIX, QUESTIONS, TRAIT_SHORT,
-                         TRAITS)
+from core import actions, llm, store
+from core.encode import dealbreaker_list, save_signup
+from core.schema import DEALBREAKERS, GENDER_MIX_UI, QUESTION_UI, TRAIT_SHORT, TRAITS
 from ui import nav, session
-from ui.components import (avatar, chip, compute, empty, esc, kv_table, label, md, page_head, ring, section,
-                           src_tag)
+from ui.components import (areas_list, avatar, chip, choice, empty, engine, esc, first, habit_grid, key_tag,
+                           kv_table, md, money, page_head, people_row, persona_label, src_tag)
+from ui.quiz import quiz
 
 
+# ---------------------------------------------------------------------------
+# Who is looking
+# ---------------------------------------------------------------------------
+def me_id():
+    return session.account()["user_id"]
 
-def current_user(cohort):
+
+def my_profile(cohort):
     """The logged-in member's cohort row, or None if they haven't done the quiz."""
-    uid = session.account().get("user_id")
-    rows = cohort[cohort["id"] == uid]
+    rows = cohort[cohort["id"] == me_id()]
     return rows.iloc[0].to_dict() if len(rows) else None
 
 
-def _reset_matches():
-    session.state().update(decisions={}, formed=None)
+def need_quiz(what):
+    """Empty state for pages that need lifestyle answers."""
+    empty("Answer the lifestyle quiz first",
+          f"{what} uses your answers about sleep, cleanliness, guests and food. It takes about two minutes.")
+    if st.button("Answer the lifestyle quiz", type="primary", key="need-quiz"):
+        nav.go("onboarding")
 
 
 # ---------------------------------------------------------------------------
-# Lifestyle quiz (used for onboarding and for editing preferences)
+# Home: what do you need?
 # ---------------------------------------------------------------------------
-def _quiz(prev, submit_label):
+HOME_OPTIONS = {
+    "both": ("Find a flat and flatmates", "I have neither.", "Show flats and people"),
+    "flat": ("Find a flat", "I just need a place.", "Show flats and rooms"),
+    "flatmates": ("Find flatmates", "I want people first, or my friends and I want to move together.",
+                  "Show flatmates"),
+    "list": ("List a space", "I have a flat or a room to rent out.", "List a space"),
+}
+
+
+def _choose(goal, has_profile):
+    actions.set_goal(me_id(), goal)
+    session.state()["explore"] = {"mode": {"both": "both", "flat": "flat", "flatmates": "people"}.get(goal)}
+    if goal == "list":
+        session.state()["listing_form"] = True
+        nav.go("listings")
+    if not has_profile:
+        session.flash("Answer a few questions first, so we can show who and what fits you.")
+        nav.go("onboarding")
+    nav.go("matches" if goal == "flatmates" else "explore")
+
+
+def _option(goal, has_profile, primary=False):
+    title, line, button = HOME_OPTIONS[goal]
+    with st.container(key=f"opt-{goal}{'-primary' if primary else ''}"):
+        md(f"<h2 class='opt-h'>{title}</h2><p class='opt-p'>{line}</p>")
+        if st.button(button, key=f"go-{goal}", type="primary" if primary else "secondary",
+                     width="stretch" if not primary else "content"):
+            _choose(goal, has_profile)
+
+
+def _continue_items(cohort, ctx):
+    uid = me_id()
+    names = actions.name_lookup(cohort)
+    items = []
+    g = actions.my_group(uid)
+    if g:
+        others = [first(names(m)) for m in g["member_ids"] if m != uid]
+        what = {"forming": "Your group is forming", "applied": "Your group has applied for a flat",
+                "housed": "Your group has a flat"}[g["status"]]
+        items.append((f"{what}, with {', '.join(others)}.", "Open my group", "group"))
+    apps = [a for a in store.load("applications") if a.get("applicant") == uid and a["status"] in ("sent", "visit_booked")]
+    for a in apps:
+        li = store.get("listings", a["listing_id"])
+        status = f"visit booked for {a['visit_slot']}" if a["status"] == "visit_booked" else "waiting for the lister"
+        items.append((f"Your application for a room in {li['area']}: {status}.", "Explore flats", "explore"))
+    due = [p for p in store.load("payments") if p["member_id"] == uid and p["status"] == "due"]
+    for p in due:
+        items.append((f"Rent of {money(p['amount'])} is due for {p['month']}.", f"Pay {money(p['amount'])}", "rent"))
+    mine = [li for li in store.load("listings") if li["owner_id"] == uid]
+    waiting = [a for a in store.load("applications") if a["listing_id"] in {li["id"] for li in mine}
+               and a["status"] in ("sent", "visit_booked")]
+    if waiting:
+        n = len(waiting)
+        items.append((f"{n} application{'s' if n > 1 else ''} waiting on your listing{'s' if len(mine) > 1 else ''}.",
+                      "Review applicants", "listings"))
+    pending = [li for li in mine if li["status"] == "pending"]
+    if pending and not waiting:
+        items.append((f"Your listing in {pending[0]['area']} is waiting for review.", "Open my listings", "listings"))
+    return items
+
+
+def home_page():
+    cohort, cl, res, ctx = engine()
     acc = session.account()
-    with st.form("quiz", border=False):
-        with st.container(key="quiz-card"):
-            section("How you live", "Answers are ordered, so drag to the closest fit.")
-            answers = {}
-            cols = st.columns(2, gap="large")
-            for n, (t, q) in enumerate(QUESTIONS.items()):
-                opts = list(q["options"])
-                default = int(prev.get(t, opts[len(opts) // 2]))
-                # WHY select_slider: answers are ordered, and a slider shows that order visually.
-                answers[t] = cols[n % 2].select_slider(q["label"], options=opts, value=default,
-                                                       format_func=lambda v, q=q: q["options"][v])
-        with st.container(key="quiz-card-2"):
-            section("The flat you want")
-            c1, c2, c3 = st.columns(3, gap="large")
-            budget = c1.slider("Budget per person / month (₹)", BUDGET_MIN, BUDGET_MAX,
-                               (int(prev.get("budget_min", 9000)), int(prev.get("budget_max", 15000))), step=500)
-            size = c2.segmented_control("People per flat", FLAT_SIZES, required=True,
-                                        default=int(prev.get("flat_size_pref", 3)))
-            mix = c3.segmented_control("Flatmate gender", GENDER_MIX, required=True,
-                                       default=prev.get("preferred_gender_mix", "same only"),
-                                       format_func=str.capitalize)
-            dbs = st.multiselect("Dealbreakers (up to 3)", list(DEALBREAKERS), format_func=DEALBREAKERS.get,
-                                 default=dealbreaker_list(prev.get("dealbreakers", "")), max_selections=3)
-            text = st.text_area("Describe your ideal flat life in 1–3 sentences", value=prev.get("free_text", ""),
-                                placeholder="I game till late but keep the kitchen spotless.")
-        submitted = st.form_submit_button(submit_label, type="primary")
+    has_profile = my_profile(cohort) is not None
+    page_head(f"Hi {esc(first(acc['name']))}. What do you need in Hyderabad?",
+              "Pick one to start. One account can do all of these, so you can come back for the others.")
+    _option("both", has_profile, primary=True)
+    cols = st.columns(3, gap="medium")
+    for col, goal in zip(cols, ("flat", "flatmates", "list")):
+        with col:
+            _option(goal, has_profile)
 
-    if submitted:
-        profile = {"id": acc["user_id"], "name": acc["name"], "email": acc["email"], "verified": True,
-                   "organisation": acc["organisation"], "office_location": acc["office_location"],
-                   "joining_month": acc["joining_month"], "gender": acc["gender"]}
-        profile.update(answers)
-        profile.update({"preferred_gender_mix": mix, "budget_min": budget[0], "budget_max": budget[1],
-                        "flat_size_pref": size, "free_text": text, "dealbreakers": ";".join(dbs),
-                        "_true_archetype": ""})
-        with st.spinner("Reading your description and updating the cohort…"):
-            session.state()["extracted"][profile["id"]] = llm.extract_traits(text)
-            save_signup(profile)
-        _reset_matches()
-        return True
-    return False
+    items = _continue_items(cohort, ctx)
+    if items:
+        with st.container(key="continue"):
+            md("<h2 class='sec-h'>Continue where you left off</h2>")
+            for n, (text, button, route) in enumerate(items):
+                with st.container(horizontal=True, vertical_alignment="center", key=f"cont-{n}"):
+                    md(f"<p class='cont-p'>{esc(text)}</p>")
+                    if st.button(button, key=f"cont-btn-{n}"):
+                        nav.go(route)
 
 
+# ---------------------------------------------------------------------------
+# Lifestyle quiz: onboarding and "Your answers"
+# ---------------------------------------------------------------------------
 def onboarding_page():
-    md("<div class='steps-mini'><span class='done'>1 · Account</span><span class='on'>2 · Lifestyle quiz</span></div>")
-    first = session.account()["name"].split()[0]
-    page_head(f"Nice to meet you, {esc(first)}.", "Two minutes. Honest answers make better flatmates.")
-    if _quiz({}, "Save and see my matches"):
-        st.rerun()  # router now shows the member pages; default is Matches
+    cohort, *_ = engine()
+    acc = session.account()
+    page_head(f"Nice to meet you, {esc(first(acc['name']))}.",
+              "Four short steps. Honest answers make better flatmates, and only the people you match with "
+              "see them.")
+    if quiz(my_profile(cohort) or {}, "onboarding", "Save and see my flat groups"):
+        session.flash("Saved your answers. These are the flat groups that fit you best.")
+        nav.go("matches")
 
 
-def preferences_page():
-    me = current_user(load_cohort())
-    page_head("Preferences", "Change your answers any time. Your matches update straight away.")
-    if _quiz(me, "Save changes"):
+def answers_page():
+    cohort, *_ = engine()
+    me = my_profile(cohort)
+    if me is None:
+        page_head("Your answers")
+        need_quiz("Your answers")
+        return
+    page_head("Your answers", "Change anything. Your flat groups and fit scores update as soon as you save.")
+    if quiz(me, "edit", "Save changes"):
+        session.flash("Saved your changes. Your flat groups are updated.")
         nav.go("matches")
 
 
 # ---------------------------------------------------------------------------
-# Matches: decide on whole groups, not individual people
+# Flat groups: decide on whole groups, not individual people
 # ---------------------------------------------------------------------------
 def group_key(g):
     return "|".join(sorted(g["member_ids"]))
 
 
-def _group_card(g, me_id, pos, total):
+def group_sentence(g):
+    lo, hi = g["budget"]
+    return (f"{esc(persona_label(g['persona']))}. Budget {money(lo)}–{hi:,} each, "
+            f"working in {esc(' and '.join(g['offices']) if len(g['offices']) < 3 else ', '.join(g['offices']))}.")
+
+
+def group_card(g, me, head_extra=""):
+    """Title, sentence, status, key tag, people, habit grid, explanation, areas."""
     open_spots = g["target"] - g["size"]
-    people = ""
-    for m in g["members"]:
-        is_me = m["id"] == me_id
-        tags = "".join(chip(label(t, m[t])) for t in ("sleep_time", "cleanliness", "guests_frequency"))
-        people += (f"<div class='person'>{avatar(m['name'], is_me)}<div class='who'>"
-                   f"<div class='n'>{esc(m['name'])}{' <span class=you>you</span>' if is_me else ''}</div>"
-                   f"<div class='m'>{esc(m['organisation'])} · {esc(m['office_location'])}</div>"
-                   f"<div class='tags'>{tags}</div></div></div>")
-    dots = "".join(f"<i class='{'on' if i == pos else ''}'></i>" for i in range(total))
-    md(f"""<div class='card-head'>
-        {ring(g['score'])}
-        <div class='ch-main'>
-          <div class='eyebrow'>Suggestion {pos + 1} of {total}<span class='dots'>{dots}</span></div>
-          <h2 class='display sm'>{g['size']}-person flat · {esc(g['persona'])}</h2>
-          <div class='chips'>{chip(f"₹{g['budget'][0]:,} – ₹{g['budget'][1]:,} each")}
-            {chip(' · '.join(g['offices']))}
-            {chip(f'{open_spots} spot open', 'warn') if open_spots > 0 else chip('Full flat', 'ok')}</div>
-        </div></div>
-        <div class='people'>{people}</div>""")
+    status = chip(f"{open_spots} spot open", "warn") if open_spots > 0 else chip("Full flat", "ok")
+    md(f"""<div class='card-head'><div class='ch-main'>
+          <h2 class='card-h'>{g['size']}-person flat {status}</h2>
+          <p class='card-p'>{group_sentence(g)}</p>{head_extra}</div>
+          {key_tag(g['score'])}</div>""")
+    md(people_row(g["members"], me))
+    md(habit_grid(g["members"], me))
     left, right = st.columns([3, 2], gap="large")
     with left:
         text, src = llm.explain_group(g)
-        md(f"<div class='label'>Why it works, what to watch {src_tag(src)}</div>")
-        with st.container(key="explain"):
+        md(f"<div class='label'>Why it works and what to agree on {src_tag(src)}</div>")
+        with st.container(key=f"explain-{group_key(g)}"):
             st.markdown(text)
     with right:
         areas, summary, src = llm.suggest_areas(g)
-        rows = "".join(f"<div class='area'><div><b>{a['area']}</b>"
-                       f"{'' if a['fits_budget'] else chip('over budget', 'warn')}</div>"
-                       f"<div class='r'>₹{a['rent']:,} · {a['avg_commute']} min</div></div>" for a in areas)
-        md(f"<div class='label'>Where to look {src_tag(src)}</div><div class='areas'>{rows}</div>"
+        md(f"<div class='label'>Areas to look in {src_tag(src)}</div>{areas_list(areas)}"
            f"<p class='fine'>{esc(summary)}</p>")
 
 
-def _accept(g):
-    st_ = session.state()
-    st_["decisions"][group_key(g)] = "accepted"
-    st_["formed"] = g
+def _accept(g, uid):
+    actions.create_group(uid, g["member_ids"], g["target"])
+    session.state()["decisions"][group_key(g)] = "accepted"
+    session.flash("Accepted the group. Other members' acceptance is simulated for the demo.")
 
 
 @st.fragment
-def _deck(deck, me_id):
+def _deck(deck, uid):
     decisions = session.state()["decisions"]
     pending = [g for g in deck if group_key(g) not in decisions]
     if not pending:
-        empty("That's every suggestion for now",
-              "New people join the cohort every week. We'll let you know when a new group fits.")
-        # WHY on_click: callbacks run before the fragment re-renders, so the deck
-        # refreshes in one pass without an explicit st.rerun.
-        st.button("Start over", icon=":material/restart_alt:", on_click=_reset_matches)
+        empty("You've seen every suggestion for now",
+              "New people join the cohort every week. Start over to see these groups again, or explore flats.")
+        st.button("Start over", icon=":material/restart_alt:",
+                  on_click=lambda: session.state().update(decisions={}))
         return
     g = pending[0]
     with st.container(key="group-card"):
-        _group_card(g, me_id, deck.index(g), len(deck))
-        with st.container(horizontal=True, gap="small", key="card-actions"):
-            if st.button("Accept group", type="primary", icon=":material/check:"):
-                _accept(g)
-                nav.go("flat")
+        group_card(g, uid, head_extra=f"<p class='fine'>Suggestion {deck.index(g) + 1} of {len(deck)}</p>")
+        with st.container(horizontal=True, gap="small", key="card-actions", vertical_alignment="center"):
+            if st.button("Accept group", type="primary"):
+                _accept(g, uid)
+                nav.go("group")
             # A click inside a fragment re-runs only this card, not the whole page.
-            st.button("Pass", icon=":material/close:",
-                      on_click=lambda: decisions.__setitem__(group_key(g), "passed"))
-            md("<span class='fine' style='margin:0 0 0 8px'>A flat forms when everyone in it accepts.</span>")
+            st.button("Pass", on_click=lambda: decisions.__setitem__(group_key(g), "passed"))
+            md("<p class='fine inline'>A flat forms when everyone in it accepts.</p>")
 
 
 def matches_page():
-    cohort = load_cohort()
-    me = current_user(cohort)
-    with st.spinner("Finding your flat groups…"):
-        cl, res = compute(cohort)
+    cohort, cl, res, ctx = engine()
+    me = my_profile(cohort)
+    if me is None:
+        page_head("Flat groups")
+        need_quiz("Flat groups")
+        return
     persona = cl["points"].set_index("id").loc[me["id"], "persona"]
-    page_head("Your matches", "You decide on whole groups, not individual people.",
-              eyebrow=f"{esc(me['name'].split()[0])} · {esc(persona)}")
+    page_head("Flat groups for you",
+              f"Whole flats of people from your batch, not single profiles. You're in the "
+              f"{esc(persona_label(persona).lower())} group of the cohort.")
+    from core.grouping import user_deck
     deck, placed = user_deck(cohort, cl, res, me["id"])
     if not placed:
         reason = next((u["reason"] for u in res["unmatched"] if u["id"] == me["id"]), "no compatible group")
-        st.warning(f"We couldn't place you in a cohort flat yet: {reason}. These are the closest alternatives.",
+        st.warning(f"We couldn't place you in a flat yet ({reason}). These are the closest alternatives.",
                    icon=":material/info:")
-    if session.state()["formed"]:
-        st.success("You've accepted a group. Your house agreement is ready in My flat.", icon=":material/home:")
-    _deck(deck, me["id"])
-
-
-# ---------------------------------------------------------------------------
-# My flat: the accepted group + AI house agreement
-# ---------------------------------------------------------------------------
-def flat_page():
-    g = session.state()["formed"]
-    if not g:
-        page_head("My flat")
-        empty("No flat yet", "Accept a suggested group on the Matches page and your house agreement appears here.")
-        if st.button("See my matches", type="primary"):
-            nav.go("matches")
+    if actions.my_group(me["id"]):
+        st.info("You already have a group. Accepting another one moves you to it.", icon=":material/group:")
+    if not deck:
+        empty("No flat groups yet", "Nobody in the cohort fits your budget and dealbreakers right now. "
+              "Try a wider budget or another flat size in Your answers.")
+        if st.button("Change my answers", type="primary"):
+            nav.go("answers")
         return
-    me_id = session.account()["user_id"]
-    page_head(" · ".join(esc(m["name"].split()[0]) for m in g["members"]),
-              f"{esc(g['persona'])} · ₹{g['budget'][0]:,} – ₹{g['budget'][1]:,} each",
-              eyebrow="Flat formed")
-    left, right = st.columns([2, 1], gap="large")
-    with right:
-        people = "".join(f"<div class='person slim'>{avatar(m['name'], m['id'] == me_id)}<div class='who'>"
-                         f"<div class='n'>{esc(m['name'])}</div><div class='m'>{esc(m['organisation'])}</div></div>"
-                         f"{chip('Accepted', 'ok')}</div>" for m in g["members"])
-        # WHY say "simulated": in the real product each member accepts on their own phone.
-        md(f"<div class='panel'><div class='label'>Flatmates</div>{people}"
-           f"<p class='fine'>Other members' acceptance is simulated for the demo.</p></div>"
-           f"<div class='panel'><div class='label'>Match</div>"
-           f"<div style='display:flex;align-items:center;gap:14px'>{ring(g['score'], 64)}"
-           f"<div class='fine' style='margin:0'>Compatibility across sleep, cleanliness, guests, food and "
-           f"8 more lifestyle answers.</div></div></div>")
-    with left:
-        text, src = llm.house_agreement(g)
-        md(f"<div class='label'>House agreement {src_tag(src)}</div>")
-        with st.container(key="agreement"):
-            st.markdown(text)
-        st.download_button("Download agreement", text, file_name="nestmate_house_agreement.md",
-                           icon=":material/download:")
+    _deck(deck, me["id"])
 
 
 # ---------------------------------------------------------------------------
 # Profile: persona + what the AI read from your own words
 # ---------------------------------------------------------------------------
 def profile_page():
-    cohort = load_cohort()
-    user = current_user(cohort)
-    cl, _ = compute(cohort)
+    cohort, cl, res, ctx = engine()
+    user = my_profile(cohort)
+    if user is None:
+        page_head("Profile")
+        need_quiz("Your profile")
+        return
     persona = cl["personas"][int(cl["points"].set_index("id").loc[user["id"], "cluster"])]
     md(f"""<div class='persona-hero'>{avatar(user['name'], True, 'lg')}<div>
-        <div class='eyebrow'>Your persona</div><h1 class='display'>{esc(persona['name'])}</h1>
-        <p>{esc(persona['description'])}</p></div></div>""")
+        <h1 class='display'>{esc(user['name'])}</h1>
+        <p>Your lifestyle group in the cohort is <b>{esc(persona_label(persona['name']).lower())}</b>.
+        {esc(persona['description'].replace('Typically — ', 'People in it typically answer '))}</p></div></div>""")
 
     left, right = st.columns([1, 1], gap="large")
+    priorities = [TRAIT_SHORT[t] for t in str(user.get("priorities", "")).split(";") if t in TRAIT_SHORT]
     with left:
         dbs = ", ".join(DEALBREAKERS[d] for d in dealbreaker_list(user["dealbreakers"])) or "None"
-        md(f"<div class='panel'><div class='label'>Account</div>" + kv_table([
+        md("<div class='panel'><h3 class='panel-h'>Account</h3>" + kv_table([
             ("Name", esc(user["name"])), ("Email", esc(user["email"])),
             ("Organisation", f"{esc(user['organisation'])} {chip('Verified', 'ok')}"),
-            ("Office · joining", f"{esc(user['office_location'])} · {esc(user['joining_month'])}")]) + "</div>"
-           f"<div class='panel'><div class='label'>Flat preferences</div>" + kv_table([
-            ("Budget per person", f"₹{user['budget_min']:,} – ₹{user['budget_max']:,}"),
+            ("Office", esc(user["office_location"])), ("Joining", esc(user["joining_month"]))]) + "</div>"
+           "<div class='panel'><h3 class='panel-h'>The flat you want</h3>" + kv_table([
+            ("Budget per person", f"{money(user['budget_min'])}–{user['budget_max']:,}"),
             ("People per flat", user["flat_size_pref"]),
-            ("Flatmate gender", user["preferred_gender_mix"].capitalize()),
-            ("Dealbreakers", esc(dbs))]) + "</div>"
-           f"<div class='panel'><div class='label'>Quiz answers</div>" +
-           kv_table([(QUESTIONS[t]["label"], label(t, user[t])) for t in TRAITS]) + "</div>")
-        if st.button("Edit preferences", icon=":material/tune:"):
-            nav.go("preferences")
+            ("Share with", GENDER_MIX_UI.get(user["preferred_gender_mix"], user["preferred_gender_mix"])),
+            ("Dealbreakers", esc(dbs)),
+            ("Matters a lot", esc(", ".join(priorities)) or "Nothing marked")]) + "</div>"
+           "<div class='panel'><h3 class='panel-h'>Your answers</h3>" +
+           kv_table([(QUESTION_UI[t]["ask"], esc(choice(t, user[t]))) for t in TRAITS]) + "</div>")
+        if st.button("Edit your answers", icon=":material/edit:"):
+            nav.go("answers")
     with right:
         extracted = session.state()["extracted"]
         if user["id"] not in extracted:
@@ -256,15 +288,17 @@ def profile_page():
             same = int(user[t]) == v["value"]
             if not same:
                 diffs[t] = v["value"]
-            rows.append((f"{TRAIT_SHORT[t].capitalize()}<div class='fine' style='margin:2px 0 0'>"
-                         f"{esc(v['reason'])}</div>",
-                         label(t, v["value"]) + ("" if same else f"<br>{chip('differs from quiz', 'warn')}")))
-        md(f"<div class='panel'><div class='label'>In your words {src_tag(source)}</div>"
-           f"<blockquote class='quote'>“{esc(user['free_text'])}”</blockquote>"
-           + (kv_table(rows) if rows else "<p class='fine'>No traits could be inferred.</p>") + "</div>")
+            rows.append((f"{TRAIT_SHORT[t].capitalize()}<div class='fine'>{esc(v['reason'])}</div>",
+                         esc(choice(t, v["value"])) + ("" if same else f"<br>{chip('Differs from your answer', 'warn')}")))
+        quote = (f"<blockquote class='quote'>{esc(user['free_text'])}</blockquote>" if user["free_text"]
+                 else "<p class='fine'>You didn't describe your ideal flat life.</p>")
+        md(f"<div class='panel'><h3 class='panel-h'>In your own words {src_tag(source)}</h3>{quote}"
+           + (kv_table(rows) if rows else "<p class='fine'>We couldn't read any habits from this.</p>") + "</div>")
         # WHY ask first: the AI suggests, the user decides. No silent profile edits.
         if diffs and st.button(f"Use {len(diffs)} suggested answer{'s' if len(diffs) > 1 else ''}",
                                icon=":material/auto_fix_high:"):
             save_signup({**user, **diffs})
-            _reset_matches()
+            session.state().update(decisions={})
+            session.flash(f"Used {len(diffs)} suggested answer{'s' if len(diffs) > 1 else ''}.")
             st.rerun()
+

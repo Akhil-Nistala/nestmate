@@ -25,7 +25,11 @@ def _store():
 
 
 def _fresh(account=None):
-    return {"account": account, "decisions": {}, "formed": None, "extracted": {}, "groups_ready": False}
+    # quiz: in-progress answers (kept here, not only in widget state, because
+    # Streamlit drops the state of widgets that aren't rendered on this step).
+    # explore: the chosen mode, filters and the flat opened on Explore.
+    return {"account": account, "decisions": {}, "extracted": {}, "groups_ready": False,
+            "quiz": None, "explore": {}, "flash": None}
 
 
 def init():
@@ -65,3 +69,12 @@ def cookie_js():
     if sid:
         return f"document.cookie='{COOKIE}={sid}; path=/; max-age={MAX_AGE}; SameSite=Lax';"
     return f"document.cookie='{COOKIE}=; path=/; max-age=0; SameSite=Lax';"
+
+
+def flash(message):
+    """A one-time confirmation shown at the top of the next page."""
+    st.session_state.app["flash"] = message
+
+
+def pop_flash():
+    return st.session_state.app.pop("flash", None) if "app" in st.session_state else None
