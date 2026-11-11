@@ -109,6 +109,26 @@ def invite_to_listing(me, invitee, listing_id):
     return create_group(me, [invitee], 2, anchored_listing_id=listing_id)
 
 
+def add_to_group(me, pid, target_size):
+    """Accept one person (the people deck): add them to your forming group, or
+    start one. Their acceptance is simulated."""
+    g = my_group(me)
+    if not g or g["status"] != "forming":
+        return create_group(me, [pid], target_size)
+    if pid in g["member_ids"]:
+        return g
+
+    def fn(rows):
+        _leave_forming([r for r in rows if r["id"] != g["id"]], pid)
+        for r in rows:
+            if r["id"] == g["id"]:
+                r["member_ids"].append(pid)
+                r["accepted"].append(pid)
+                r["target_size"] = max(r["target_size"], len(r["member_ids"]))
+    store.mutate("groups", fn)
+    return store.get("groups", g["id"])
+
+
 def leave_group(mid, group_id):
     def fn(rows):
         for g in rows:

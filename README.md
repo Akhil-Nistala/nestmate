@@ -1,8 +1,7 @@
-# Nestmate: know who you're living with before you land in Hyderabad
+# Nestmate: find flatmates you'll actually get on with
 
-Working prototype for a live demo. Freshers and interns relocating to Hyderabad
-(Deloitte offices in Gachibowli, Madhapur, Hitec City and Kondapur) find a flat,
-flatmates, or both: whole **flat groups** of 2–4 verified people whose lifestyles
+Working prototype for a live demo. People joining a company or college in a new
+city find a flat, flatmates, or both: whole **flat groups** of 2–4 verified people whose lifestyles
 fit, and flats or rooms to go with them. People with a flat or a spare room can
 list it, pick applicants by fit, and collect rent.
 
@@ -10,7 +9,7 @@ list it, pick applicants by fit, and collect rent.
 | Existing (NoBroker, Roomster, FB groups) | Nestmate |
 |---|---|
 | Listing boards, unverified strangers | Verified via company or college email domain |
-| 1:1 discovery | Whole flat groups (2–4); decide on groups, not people |
+| 1:1 discovery | Accept or pass one person at a time; each new suggestion fits everyone already in your group. Or take a ready-made group |
 | No lifestyle signal | Four-step quiz, "matters a lot" marks, dealbreakers, free text, k-means personas |
 | No explanation | Habit grid shows where a group is the same, close or different; the LLM explains why it works |
 | Rooms in occupied flats are a gamble | "You'd live with Rahul": fit with the people already living there |
@@ -67,7 +66,7 @@ Seed profiles (`data/profiles.csv`) and the LLM cache are never modified by a re
 | Looking for a flat and flatmates | Arjun Gupta (U102), quiz done | Explore, open Mr. Rao's flat in Gachibowli, invite Vamsi (91% fit), apply as a group. After Mr. Rao accepts: pay rent in the mock checkout, add a shared bill. Rahul's spare room shows "You'd live with Rahul". |
 | Renting out a flat | Mr. Rao (O001), landlord, no quiz | My listings: a 3BHK let as rooms, one group application already waiting. Book a visit, accept Arjun's group, see the house agreement and rent collection. |
 | Tenant with a spare room | Rahul Patel (U167) | Listed his spare room in Madhapur; his landlord isn't on the app, so rent goes to the landlord's UPI ID. |
-| HR admin | Priya Nair, hr@deloitte.com / nestmate-hr | Cohort overview, flat groups, people, listings to review (approve L008), flags (a listing 50% below the area average, an account with three listings, a user report), model checks. |
+| Admin | Priya Nair (HR), hr@deloitte.com / nestmate-hr | Cohort overview, flat groups, people, listings to review (approve L008), flags (a listing 50% below the area average, an account with three listings, a user report), model checks. |
 
 "Any member of the synthetic cohort" signs in as any seed profile. Demo mode needs
 `NESTMATE_DEMO=1` (set in `.env.example`); without it there are no password-free
@@ -83,13 +82,13 @@ and one account can search and list.
 | Logged out | `/login`, `/signup` | Log in, sign up, demo accounts |
 | Member | `/home` | Four options (find a flat, find flatmates, both, list a space) and "continue where you left off" |
 | | `/explore` | Flats with people from your batch, flats and rooms (filters), flatmates, or flats for your group; each with a fit score |
-| | `/matches` (Flat groups) | The group deck: accept or pass on whole groups |
+| | `/matches` (Flatmates) | Accept or pass one person at a time (each joins your group), or ready-made groups |
 | | `/group` (My group) | Members, combined budget, shortlisted flats, apply as a group, house agreement once housed |
 | | `/listings` (My listings) | List a space; your listings and their applicants, best fit first; book visits; accept |
 | | `/rent` | Your share, who has paid, mock checkout, shared bills; or rent collection as a lister |
 | | `/profile`, `/answers` | Profile and AI-read traits; the quiz in edit mode (from the account menu) |
 | | `/onboarding` | The quiz, shown until it's done (people who only list a space start on Home) |
-| HR admin | `/admin`, `/admin-flats`, `/admin-people` | Their own organisation's joiners only |
+| Admin | `/admin`, `/admin-flats`, `/admin-people` | Their own organisation's joiners only |
 | | `/admin-listings`, `/admin-flags` | Review new listings; rule-based flags with Dismiss / Remove (platform-wide) |
 | | `/admin-model` | Cohort-wide model checks |
 
@@ -146,7 +145,7 @@ from `QUESTIONS`, whose option text goes into LLM prompts and the cache keys.
 ```
 app.py                router: builds the role's routes, top bar, theme toggle
 ui/auth_pages.py      log in, sign up, demo accounts
-ui/member_pages.py    home, flat groups deck, profile, onboarding and "Your answers"
+ui/member_pages.py    home, flatmates (one at a time or groups), profile, onboarding and "Your answers"
 ui/quiz.py            the four-step lifestyle quiz
 ui/market_pages.py    explore, my group, my listings, rent
 ui/admin_pages.py     HR overview, flat groups, people, listings to review, flags, model checks

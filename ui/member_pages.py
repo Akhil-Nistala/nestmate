@@ -9,11 +9,12 @@ in ui/market_pages.py.
 """
 import streamlit as st
 
-from core import actions, llm, store
+from core import actions, llm, market, store
 from core.encode import dealbreaker_list, save_signup
 from core.schema import DEALBREAKERS, GENDER_MIX_UI, QUESTION_UI, TRAIT_SHORT, TRAITS
 from ui import nav, session
-from ui.components import (areas_list, avatar, chip, choice, empty, engine, esc, first, habit_grid, key_tag,
+from ui.components import (lc, areas_list, avatar, chip, choice, empty, engine, esc, first, habit_grid, join_and,
+                           key_tag,
                            kv_table, md, money, month_name, page_head, people_row, persona_label, src_tag)
 from ui.quiz import quiz
 
@@ -43,11 +44,10 @@ def need_quiz(what):
 # Home: what do you need?
 # ---------------------------------------------------------------------------
 HOME_OPTIONS = {
-    "both": ("Find a flat and flatmates", "I have neither.", "Show flats and people"),
-    "flat": ("Find a flat", "I just need a place.", "Show flats and rooms"),
-    "flatmates": ("Find flatmates", "I want people first, or my friends and I want to move together.",
-                  "Show flatmates"),
-    "list": ("List a space", "I have a flat or a room to rent out.", "List a space"),
+    "both": ("A flat and flatmates", "You have neither.", "Show flats and people"),
+    "flat": ("A flat", "You just need a place.", "Show flats"),
+    "flatmates": ("Flatmates", "People first, or you and friends want to move together.", "Show people"),
+    "list": ("Someone for my space", "You have a flat or a room to rent out.", "List a space"),
 }
 
 
@@ -61,15 +61,6 @@ def _choose(goal, has_profile):
         session.flash("Answer a few questions first, so we can show who and what fits you.")
         nav.go("onboarding")
     nav.go("matches" if goal == "flatmates" else "explore")
-
-
-def _option(goal, has_profile, primary=False):
-    title, line, button = HOME_OPTIONS[goal]
-    with st.container(key=f"opt-{goal}{'-primary' if primary else ''}"):
-        md(f"<h2 class='opt-h'>{title}</h2><p class='opt-p'>{line}</p>")
-        if st.button(button, key=f"go-{goal}", type="primary" if primary else "secondary",
-                     width="stretch" if not primary else "content"):
-            _choose(goal, has_profile)
 
 
 def _continue_items(cohort, ctx):
@@ -106,24 +97,23 @@ def _continue_items(cohort, ctx):
 
 def home_page():
     cohort, cl, res, ctx = engine()
-    acc = session.account()
     has_profile = my_profile(cohort) is not None
-    page_head(f"Hi {esc(first(acc['name']))}. What do you need in Hyderabad?",
-              "Pick one to start. One account can do all of these, so you can come back for the others.")
-    _option("both", has_profile, primary=True)
-    cols = st.columns(3, gap="medium")
-    for col, goal in zip(cols, ("flat", "flatmates", "list")):
-        with col:
-            _option(goal, has_profile)
+    page_head("What are you looking for?")
+    with st.container(key="home-list"):
+        for goal, (title, line, button) in HOME_OPTIONS.items():
+            with st.container(key=f"opt-{goal}", horizontal=True, vertical_alignment="center"):
+                md(f"<div class='opt'><b>{title}</b><span>{line}</span></div>")
+                if st.button(button, key=f"go-{goal}", type="primary" if goal == "both" else "secondary"):
+                    _choose(goal, has_profile)
 
     items = _continue_items(cohort, ctx)
     if items:
+        md("<h2 class='sec-h'>Continue</h2>")
         with st.container(key="continue"):
-            md("<h2 class='sec-h'>Continue where you left off</h2>")
             for n, (text, button, route) in enumerate(items):
                 with st.container(horizontal=True, vertical_alignment="center", key=f"cont-{n}"):
                     md(f"<p class='cont-p'>{esc(text)}</p>")
-                    if st.button(button, key=f"cont-btn-{n}"):
+                    if st.button(button, key=f"cont-btn-{n}", type="tertiary"):
                         nav.go(route)
 
 
@@ -136,8 +126,8 @@ def onboarding_page():
     page_head(f"Nice to meet you, {esc(first(acc['name']))}.",
               "Four short steps. Honest answers make better flatmates, and only the people you match with "
               "see them.")
-    if quiz(my_profile(cohort) or {}, "onboarding", "Save and see my flat groups"):
-        session.flash("Saved your answers. These are the flat groups that fit you best.")
+    if quiz(my_profile(cohort) or {}, "onboarding", "Save and see flatmates"):
+        session.flash("Saved your answers. These are the people who fit you best.")
         nav.go("matches")
 
 
@@ -148,9 +138,9 @@ def answers_page():
         page_head("Your answers")
         need_quiz("Your answers")
         return
-    page_head("Your answers", "Change anything. Your flat groups and fit scores update as soon as you save.")
+    page_head("Your answers", "Change anything. Your matches update as soon as you save.")
     if quiz(me, "edit", "Save changes"):
-        session.flash("Saved your changes. Your flat groups are updated.")
+        session.flash("Saved your changes. Your matches are updated.")
         nav.go("matches")
 
 
@@ -195,54 +185,117 @@ def _accept(g, uid):
     session.flash("Accepted the group. Other members' acceptance is simulated for the demo.")
 
 
-@st.fragment
-def _deck(deck, uid):
+def _group_deck(deck, uid):
     decisions = session.state()["decisions"]
     pending = [g for g in deck if group_key(g) not in decisions]
     if not pending:
-        empty("You've seen every suggestion for now",
-              "New people join the cohort every week. Start over to see these groups again, or explore flats.")
-        st.button("Start over", icon=":material/restart_alt:",
-                  on_click=lambda: session.state().update(decisions={}))
+        empty("You've seen every group for now", "Start over to see them again, or try one person at a time.")
+        st.button("Start over", on_click=lambda: [decisions.pop(group_key(g), None) for g in deck])
         return
     g = pending[0]
     with st.container(key="group-card"):
-        group_card(g, uid, head_extra=f"<p class='fine'>Suggestion {deck.index(g) + 1} of {len(deck)}</p>")
+        group_card(g, uid, head_extra=f"<p class='fine'>Group {deck.index(g) + 1} of {len(deck)}</p>")
         with st.container(horizontal=True, gap="small", key="card-actions", vertical_alignment="center"):
             if st.button("Accept group", type="primary"):
                 _accept(g, uid)
                 nav.go("group")
-            # A click inside a fragment re-runs only this card, not the whole page.
             st.button("Pass", on_click=lambda: decisions.__setitem__(group_key(g), "passed"))
-            md("<p class='fine inline'>A flat forms when everyone in it accepts.</p>")
+
+
+def _decide_person(uid, pid, target, accept, names):
+    session.state()["decisions"]["p:" + pid] = "accepted" if accept else "passed"
+    if accept:
+        actions.add_to_group(uid, pid, target)
+        session.flash(f"Added {first(names(pid))} to your group. Their acceptance is simulated for the demo.")
+
+
+def _reset_people():
+    d = session.state()["decisions"]
+    for k in [k for k in d if k.startswith("p:") and d[k] == "passed"]:
+        d.pop(k)
+
+
+def _people_deck(ctx, me, names):
+    """Tinder-style: one person at a time. Each person you accept joins your group,
+    and the next suggestions must fit everyone already in it."""
+    uid = me["id"]
+    g = actions.my_group(uid)
+    if g and g["status"] != "forming":
+        empty("Your group is already moving", "It has applied for a flat or has one. See it in My group.")
+        if st.button("Open my group", type="primary"):
+            nav.go("group")
+        return
+    members = g["member_ids"] if g else [uid]
+    target = max(int(me["flat_size_pref"]), len(members))
+    others = [first(names(m)) for m in members if m != uid]
+    faces = "".join(avatar(names(m), m == uid) for m in members)
+    so_far = "Just you so far" if not others else f"You and {join_and(others)}"
+    md(f"<div class='groupbar'><span class='faces-row'>{faces}</span>"
+       f"<span><b>{so_far}</b>, {len(members)} of {target} people</span></div>")
+    if len(members) >= target:
+        empty("Your group is full", "Find a flat with enough free rooms for all of you.")
+        with st.container(horizontal=True, gap="small"):
+            if st.button("Find flats for us", type="primary"):
+                session.state()["explore"] = {"mode": "group"}
+                nav.go("explore")
+            if st.button("Open my group"):
+                nav.go("group")
+        return
+    decided = [k[2:] for k in session.state()["decisions"] if k.startswith("p:")]
+    cands = market.people_for_group(ctx, members, exclude=decided)
+    if not cands:
+        empty("Nobody else fits your group right now",
+              "Everyone left clashes with a dealbreaker or the budget. You can see the people you passed again.")
+        st.button("Show people I passed", on_click=_reset_people)
+        return
+    pid, score = cands[0]
+    p = market.person(ctx, pid)
+    diff = market.biggest_difference(ctx, uid, pid)
+    with st.container(key="person-card"):
+        md(f"""<div class='card-head'><div class='ch-main'>
+              <div class='who-big'>{avatar(p['name'])}<div><h2 class='card-h'>{esc(p['name'])}</h2>
+              <p class='card-p'>{esc(p['organisation'])}, {esc(p['office_location'])}</p></div></div></div>
+              {key_tag(score, title='Average fit with your group' if others else 'Fit with you')}</div>
+              <p class='card-p'>Budget {money(p['budget_min'])}–{p['budget_max']:,}, wants a
+              {p['flat_size_pref']}-person flat.</p>"""
+           + (f"<blockquote class='quote small'>{esc(p['free_text'])}</blockquote>" if p["free_text"] else ""))
+        md(habit_grid([market.person(ctx, m) for m in members] + [p], uid))
+        if diff:
+            md(f"<p class='fine'>Biggest difference with you: {TRAIT_SHORT[diff[0]]} "
+               f"({esc(lc(diff[1]))} vs {esc(lc(diff[2]))}).</p>")
+        with st.container(horizontal=True, gap="small", key="card-actions", vertical_alignment="center"):
+            st.button("Accept", type="primary", icon=":material/check:", key=f"yes-{pid}",
+                      on_click=_decide_person, args=(uid, pid, target, True, names))
+            st.button("Pass", icon=":material/close:", key=f"no-{pid}",
+                      on_click=_decide_person, args=(uid, pid, target, False, names))
+            md(f"<p class='fine inline'>{len(cands) - 1} more who fit your group</p>")
 
 
 def matches_page():
     cohort, cl, res, ctx = engine()
     me = my_profile(cohort)
     if me is None:
-        page_head("Flat groups")
-        need_quiz("Flat groups")
+        page_head("Flatmates")
+        need_quiz("Flatmates")
         return
-    persona = cl["points"].set_index("id").loc[me["id"], "persona"]
-    page_head("Flat groups for you",
-              f"Whole flats of people from your batch, not single profiles. You're in the "
-              f"{esc(persona_label(persona).lower())} group of the cohort.")
+    names = actions.name_lookup(cohort)
+    page_head("Flatmates", "Accept or pass. Everyone you accept joins your group.")
+    mode = st.segmented_control("Show", ["people", "groups"], default="people", key="match-mode",
+                                format_func={"people": "One at a time", "groups": "Ready-made groups"}.get,
+                                label_visibility="collapsed") or "people"
+    if mode == "people":
+        _people_deck(ctx, me, names)
+        return
     from core.grouping import user_deck
     deck, placed = user_deck(cohort, cl, res, me["id"])
     if not placed:
         reason = next((u["reason"] for u in res["unmatched"] if u["id"] == me["id"]), "no compatible group")
         st.warning(f"We couldn't place you in a flat yet ({reason}). These are the closest alternatives.",
                    icon=":material/info:")
-    if actions.my_group(me["id"]):
-        st.info("You already have a group. Accepting another one moves you to it.", icon=":material/group:")
     if not deck:
-        empty("No flat groups yet", "Nobody in the cohort fits your budget and dealbreakers right now. "
-              "Try a wider budget or another flat size in Your answers.")
-        if st.button("Change my answers", type="primary"):
-            nav.go("answers")
+        empty("No ready-made groups yet", "Try one person at a time, or a wider budget in Your answers.")
         return
-    _deck(deck, me["id"])
+    _group_deck(deck, me["id"])
 
 
 # ---------------------------------------------------------------------------
