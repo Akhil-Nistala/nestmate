@@ -210,6 +210,22 @@ def people_results(ctx, me, limit=12):
     return [(ids[j], float(ctx["S"][i, j])) for j in order]
 
 
+def next_best_person(ctx, member_ids, exclude=()):
+    """Replacement when someone passes on a group member: the person who is
+    compatible with EVERYONE still in the group (hard rules) and has the best
+    average pair score with them. Returns (id, score) or None."""
+    idx = [ctx["pos"][m] for m in member_ids if in_cohort(ctx, m)]
+    skip = set(exclude) | set(member_ids)
+    best = None
+    for j, pid in enumerate(ctx["df"]["id"]):
+        if pid in skip or not all(ctx["compat"][j, i] for i in idx):
+            continue
+        score = float(np.mean([ctx["S"][j, i] for i in idx]))
+        if best is None or score > best[1]:
+            best = (pid, score)
+    return best
+
+
 # ---------------------------------------------------------------------------
 # Group <-> listing
 # ---------------------------------------------------------------------------

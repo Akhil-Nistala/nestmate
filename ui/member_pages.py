@@ -9,7 +9,7 @@ in ui/market_pages.py.
 """
 import streamlit as st
 
-from core import actions, llm, store
+from core import actions, llm, market, store
 from core.encode import dealbreaker_list, save_signup
 from core.schema import DEALBREAKERS, GENDER_MIX_UI, QUESTION_UI, TRAIT_SHORT, TRAITS
 from ui import nav, session
@@ -167,15 +167,19 @@ def group_sentence(g):
             f"working in {esc(' and '.join(g['offices']) if len(g['offices']) < 3 else ', '.join(g['offices']))}.")
 
 
-def group_card(g, me, head_extra=""):
-    """Title, sentence, status, key tag, people, habit grid, explanation, areas."""
+def group_card(g, me, head_extra="", people_controls=None):
+    """Title, sentence, status, key tag, people, habit grid, explanation, areas.
+    people_controls: optional function that draws the people with buttons."""
     open_spots = g["target"] - g["size"]
     status = chip(f"{open_spots} spot open", "warn") if open_spots > 0 else chip("Full flat", "ok")
     md(f"""<div class='card-head'><div class='ch-main'>
           <h2 class='card-h'>{g['size']}-person flat {status}</h2>
           <p class='card-p'>{group_sentence(g)}</p>{head_extra}</div>
           {key_tag(g['score'])}</div>""")
-    md(people_row(g["members"], me))
+    if people_controls:
+        people_controls()
+    else:
+        md(people_row(g["members"], me))
     md(habit_grid(g["members"], me))
     left, right = st.columns([3, 2], gap="large")
     with left:
@@ -189,31 +193,83 @@ def group_card(g, me, head_extra=""):
            f"<p class='fine'>{esc(summary)}</p>")
 
 
-def _accept(g, uid):
+def _accept(g, uid, key):
     actions.create_group(uid, g["member_ids"], g["target"])
-    session.state()["decisions"][group_key(g)] = "accepted"
+    session.state()["decisions"][key] = "accepted"
     session.flash("Accepted the group. Other members' acceptance is simulated for the demo.")
 
 
-@st.fragment
-def _deck(deck, uid):
-    decisions = session.state()["decisions"]
+def _keep(pid):
+    kept = session.state().setdefault("kept_people", [])
+    if pid not in kept:
+        kept.append(pid)
+
+
+def _pass_person(key, members, pid, uid, ctx, names):
+    """Pass on one person: swap in the next best fit for everyone who stays."""
+    state = session.state()
+    passed = state.setdefault("passed_people", [])
+    if pid not in passed:
+        passed.append(pid)
+    rest = [m for m in members if m != pid]
+    nxt = market.next_best_person(ctx, rest, exclude=passed)
+    if nxt:
+        state.setdefault("group_edits", {})[key] = [nxt[0] if m == pid else m for m in members]
+        st.toast(f"Passed on {first(names(pid))}. {first(names(nxt[0]))} is the next best fit ({nxt[1]:.0f}%).")
+    elif len(rest) >= 2:
+        state.setdefault("group_edits", {})[key] = rest
+        st.toast(f"Passed on {first(names(pid))}. Nobody else fits this group, so it has one spot open.")
+    else:
+        passed.remove(pid)
+        st.toast("Nobody else fits you right now, so this person stays.")
+
+
+def _people_controls(g, uid, key, ctx, names):
+    """Each person in the group with Accept and Pass (you're shown first, no buttons)."""
+    kept = session.state().setdefault("kept_people", [])
+    members = g["member_ids"]
+    cols = st.columns(len(members), gap="medium")
+    for col, m in zip(cols, sorted(g["members"], key=lambda p: p["id"] != uid)):
+        with col, st.container(key=f"pp-{m['id']}"):
+            md(people_row([m], uid))
+            if m["id"] == uid:
+                continue
+            if m["id"] in kept:
+                md(chip("Accepted", "ok"))
+                continue
+            with st.container(horizontal=True, gap="small"):
+                st.button("Accept", key=f"keep-{m['id']}", icon=":material/check:", on_click=_keep, args=(m["id"],))
+                st.button("Pass", key=f"swap-{m['id']}", icon=":material/close:",
+                          on_click=_pass_person, args=(key, members, m["id"], uid, ctx, names))
+
+
+# WHY not @st.fragment: a fragment re-run drops the page's injected stylesheet
+# (st.html <style> lives outside the fragment), leaving the page unstyled.
+# A full re-run is quick because the matching is cached.
+def _deck(deck, uid, ctx, names):
+    state = session.state()
+    decisions = state["decisions"]
     pending = [g for g in deck if group_key(g) not in decisions]
     if not pending:
         empty("You've seen every suggestion for now",
               "New people join the cohort every week. Start over to see these groups again, or explore flats.")
         st.button("Start over", icon=":material/restart_alt:",
-                  on_click=lambda: session.state().update(decisions={}))
+                  on_click=lambda: state.update(decisions={}, group_edits={}, passed_people=[], kept_people=[]))
         return
-    g = pending[0]
+    g0 = pending[0]
+    key = group_key(g0)
+    members = state.setdefault("group_edits", {}).get(key, g0["member_ids"])
+    # After a swap, rebuild the card from the engine (score, grid, explanation).
+    g = g0 if members == g0["member_ids"] else {**market.describe(ctx, members), "target": g0["target"]}
     with st.container(key="group-card"):
-        group_card(g, uid, head_extra=f"<p class='fine'>Suggestion {deck.index(g) + 1} of {len(deck)}</p>")
+        group_card(g, uid, head_extra=f"<p class='fine'>Suggestion {deck.index(g0) + 1} of {len(deck)}. "
+                                      f"Accept or pass on each person; we'll swap in the next best fit.</p>",
+                   people_controls=lambda: _people_controls(g, uid, key, ctx, names))
         with st.container(horizontal=True, gap="small", key="card-actions", vertical_alignment="center"):
             if st.button("Accept group", type="primary"):
-                _accept(g, uid)
+                _accept(g, uid, key)
                 nav.go("group")
-            # A click inside a fragment re-runs only this card, not the whole page.
-            st.button("Pass", on_click=lambda: decisions.__setitem__(group_key(g), "passed"))
+            st.button("Pass on this group", on_click=lambda: decisions.__setitem__(key, "passed"))
             md("<p class='fine inline'>A flat forms when everyone in it accepts.</p>")
 
 
@@ -242,7 +298,7 @@ def matches_page():
         if st.button("Change my answers", type="primary"):
             nav.go("answers")
         return
-    _deck(deck, me["id"])
+    _deck(deck, me["id"], ctx, actions.name_lookup(cohort))
 
 
 # ---------------------------------------------------------------------------
