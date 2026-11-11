@@ -5,6 +5,9 @@ city find a flat, flatmates, or both: whole **flat groups** of 2–4 verified pe
 fit, and flats or rooms to go with them. People with a flat or a spare room can
 list it, pick applicants by fit, and collect rent.
 
+Nothing is tied to one city or company: partner email domains, offices and areas
+are data in `core/schema.py`. The sample data is a Hyderabad joining cohort.
+
 ## Why it's different
 | Existing (NoBroker, Roomster, FB groups) | Nestmate |
 |---|---|
