@@ -67,7 +67,7 @@ Seeded admin login: `hr@deloitte.com` / `nestmate-hr`.
 1. **Verify** — email domain must be in the partner list (`core/schema.py`). OTP mocked.
 2. **Profile** — 11 ordinal quiz questions + free text. The LLM extracts traits from the text; the user accepts or ignores them.
 3. **Personas** — StandardScaler → ×√weight → KMeans for k=3..8, best k by silhouette. Personas auto-named from the 2 most extreme centroid traits. PCA for the 2D map.
-4. **Groups** — K-means can't control cluster size, so it only narrows the search. Inside each cluster: pairwise score `100·(1 − weighted normalised distance)`, hard rules (budget overlap, dealbreakers, gender preference) → 0. Greedy build (hardest-to-place first, add best average-scoring compatible person), swap improvement pass (≤200), leftovers placed or marked unmatched with a reason. Deterministic.
+4. **Groups** — K-means can't control cluster size, so it only narrows the search. Inside each cluster: pairwise score `100·(1 − weighted normalised distance)`, hard rules (budget overlap, dealbreakers, gender preference) → 0. Greedy build (hardest-to-place first, add best average-scoring compatible person), swap improvement pass (≤200), leftovers fill open spots in existing flats, then form new flats with each other across personas; anyone still left is marked unmatched with a reason. Deterministic.
 5. **Explain & agree** — LLM writes "Why this works / Watch out for" and a house agreement using ONLY the data passed in. Areas are ranked in pure Python from a hardcoded rent/commute table.
 
 All weights live in one dict (`WEIGHTS` in `core/schema.py`); all prompts are constants at the top of `core/llm.py`.

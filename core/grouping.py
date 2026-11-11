@@ -82,30 +82,16 @@ def form_groups(df, labels):
     n = len(df)
     n_options = compat.sum(axis=1)
 
-    groups = []  # each: {"members": [...], "target": int, "cluster": int}
+    groups = []  # each: {"members": [...], "target": int, "cluster": int (-1 = cross-persona)}
     leftovers = []
 
     # Step 2: greedy within each cluster AND same size preference.
     for c in sorted(set(labels)):
         for size in (2, 3, 4):
             pool = [i for i in range(n) if labels[i] == c and pref[i] == size]
-            # Hardest to place first, so they aren't left behind.
-            pool.sort(key=lambda i: (n_options[i], i))
-            free = list(pool)
-            while free:
-                seed = free.pop(0)
-                g = [seed]
-                while len(g) < size:
-                    cands = [j for j in free if all(compat[j, m] for m in g)]
-                    if not cands:
-                        break
-                    best = max(cands, key=lambda j: (np.mean([S[j, m] for m in g]), -j))
-                    g.append(best)
-                    free.remove(best)
-                if len(g) >= 2:
-                    groups.append({"members": g, "target": size, "cluster": int(c)})
-                else:
-                    leftovers.append(seed)
+            formed, left = _greedy(pool, size, S, compat, n_options)
+            groups += [{"members": g, "target": size, "cluster": int(c)} for g in formed]
+            leftovers += left
 
     # Step 3: improvement pass -- swap members between groups with the same target
     # size (so everyone's size preference stays satisfied).
@@ -132,8 +118,8 @@ def form_groups(df, labels):
             if iters >= MAX_SWAP_ITERS:
                 break
 
-    # Step 4: leftovers -> best compatible group (any cluster) with an open spot.
-    unmatched = []
+    # Step 4a: leftovers -> best compatible group (any cluster) with an open spot.
+    still_left = []
     for i in sorted(leftovers):
         options = [g for g in groups
                    if len(g["members"]) < g["target"] and g["target"] == pref[i]
@@ -142,9 +128,46 @@ def form_groups(df, labels):
             best = max(options, key=lambda g: np.mean([S[i, m] for m in g["members"]]))
             best["members"].append(i)
         else:
-            unmatched.append({"index": i, "reason": unmatched_reason(i, df, compat, groups, pref)})
+            still_left.append(i)
 
+    # Step 4b: leftovers -> new flats with EACH OTHER, across clusters. WHY: two
+    # compatible people who both want a 2-person flat but landed in different
+    # personas (or were each the odd one out in their cluster) should still be
+    # matched; the persona split is only a search shortcut, not a hard rule.
+    final_left = []
+    for size in (2, 3, 4):
+        pool = [i for i in still_left if pref[i] == size]
+        formed, left = _greedy(pool, size, S, compat, n_options)
+        groups += [{"members": g, "target": size, "cluster": -1} for g in formed]
+        final_left += left
+
+    # Reasons are computed last, so they reflect every group formed above.
+    unmatched = [{"index": i, "reason": unmatched_reason(i, df, compat, groups, pref)} for i in sorted(final_left)]
     return groups, unmatched, S, compat
+
+
+def _greedy(pool, size, S, compat, n_options):
+    """Greedy flats of `size` from `pool`: seed with the hardest-to-place person
+    (fewest compatible people, so they aren't left behind), then repeatedly add
+    the compatible person with the best average score to the group so far.
+    Returns (groups as member lists with >= 2 people, leftover indices)."""
+    free = sorted(pool, key=lambda i: (n_options[i], i))
+    groups, leftovers = [], []
+    while free:
+        seed = free.pop(0)
+        g = [seed]
+        while len(g) < size:
+            cands = [j for j in free if all(compat[j, m] for m in g)]
+            if not cands:
+                break
+            best = max(cands, key=lambda j: (np.mean([S[j, m] for m in g]), -j))
+            g.append(best)
+            free.remove(best)
+        if len(g) >= 2:
+            groups.append(g)
+        else:
+            leftovers.append(seed)
+    return groups, leftovers
 
 
 def unmatched_reason(i, df, compat, groups, pref):
