@@ -55,10 +55,10 @@ def explore_defaults(goal):
     """Where Explore starts for each Home goal. Only a starting point: the person
     can change any of it, and their choices are kept for the session."""
     if goal == "flat":
-        return {"tab": "Flats", "sort": "practical", "share": False}
+        return {"tab": "Flats", "share": False}
     if goal == "flatmates":
-        return {"tab": "People", "sort": "people", "share": True}
-    return {"tab": "Flats", "sort": "people", "share": True}
+        return {"tab": "People", "share": True}
+    return {"tab": "Flats", "share": True}
 
 
 def _choose(goal, has_profile):

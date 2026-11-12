@@ -89,6 +89,71 @@ def create_group(creator, member_ids, target_size, anchored_listing_id=None):
     return out
 
 
+def add_to_group(ctx, uid, pid):
+    """Add pid to uid's group, or start a group of the two. Other members'
+    acceptance is simulated, as everywhere in the demo.
+    Returns (group, None) or (None, reason in plain words)."""
+    g = my_group(uid)
+    if g and g["status"] != "forming":
+        return None, "Your group has applied for a flat. Withdraw the application to change flatmates."
+    theirs = my_group(pid)
+    if theirs and theirs["status"] != "forming" and (not g or theirs["id"] != g["id"]):
+        return None, f"{market._first(market.person(ctx, pid)['name'])} is already in a group that has applied for a flat."
+    why = market.can_add(ctx, g["member_ids"] if g else [uid], pid)
+    if why:
+        return None, why
+    if not g:
+        me = market.person(ctx, uid) or {}
+        return create_group(uid, [pid], int(me.get("flat_size_pref", 2) or 2)), None
+
+    def fn(rows):
+        _leave_forming([r for r in rows if r["id"] != g["id"]], pid)
+        for r in rows:
+            if r["id"] == g["id"]:
+                r["member_ids"] = r["member_ids"] + [pid]
+                r["accepted"] = list(dict.fromkeys(r.get("accepted", []) + [pid]))
+                r["target_size"] = max(r["target_size"], len(r["member_ids"]))
+    store.mutate("groups", fn)
+    return store.get("groups", g["id"]), None
+
+
+def remove_from_group(group_id, member_id):
+    """Take someone out of a forming group. Under 2 people left, the group dissolves.
+    Returns the group after the change."""
+    def fn(rows):
+        for g in rows:
+            if g["id"] == group_id and g["status"] == "forming":
+                g["member_ids"] = [m for m in g["member_ids"] if m != member_id]
+                g["accepted"] = [m for m in g.get("accepted", []) if m != member_id]
+                if len(g["member_ids"]) < 2:
+                    g["status"] = "dissolved"
+    store.mutate("groups", fn)
+    return store.get("groups", group_id)
+
+
+def set_target_size(group_id, n):
+    """Flat size the group is looking for: 2 to 4, never below its current size."""
+    def fn(rows):
+        for g in rows:
+            if g["id"] == group_id:
+                g["target_size"] = max(len(g["member_ids"]), min(market.MAX_GROUP, max(2, int(n))))
+    store.mutate("groups", fn)
+
+
+def withdraw_application(app_id):
+    """The applicants take an application back. The group is forming again once it
+    has no other open application."""
+    app = store.update("applications", app_id, status="withdrawn")
+    if app and app.get("group_id") and not open_group_applications(app["group_id"]):
+        store.update("groups", app["group_id"], status="forming")
+    return app
+
+
+def open_group_applications(group_id):
+    return [a for a in store.load("applications")
+            if a.get("group_id") == group_id and a["status"] in ("sent", "visit_booked")]
+
+
 def leave_group(mid, group_id):
     def fn(rows):
         for g in rows:
@@ -171,9 +236,7 @@ def book_visit(app_id, slot):
 def reject_application(app_id, reason=""):
     app = store.update("applications", app_id, status="rejected", reason=reason)
     # Back to forming only if the group has no other application still open.
-    if app and app.get("group_id") and not any(
-            a["group_id"] == app["group_id"] for a in store.load("applications")
-            if a.get("group_id") and a["status"] in ("sent", "visit_booked")):
+    if app and app.get("group_id") and not open_group_applications(app["group_id"]):
         store.update("groups", app["group_id"], status="forming")
 
 

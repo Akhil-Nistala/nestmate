@@ -10,8 +10,8 @@ What it sets up, so each demo account has a story:
   - Rahul Patel (U167) rents a 2BHK in Madhapur and lists his spare room; his
     landlord is not on the app, so rent goes to the landlord's UPI ID.
   - Arjun Gupta (U102) has picked "Find a flat and flatmates"; Vamsi Das (U082),
-    his best fit in the cohort, is interested in Mr. Rao's flat. With Best people
-    fit and Only flats I can share, Mr. Rao's flat is first in Explore for Arjun.
+    his best fit in the cohort, is interested in Mr. Rao's flat, so Mr. Rao's flat
+    is first in Explore for Arjun.
   - Meera Joshi (O006) lists a 1BHK in Madhapur, for one person: switching off
     Only flats I can share is what makes it appear.
   - Rents follow the area table in core/schema.py. One pending listing is priced

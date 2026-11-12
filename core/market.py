@@ -28,9 +28,10 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 
+from core.encode import dealbreaker_list
 from core.grouping import conflict_reason, describe_group, pair_scores
-from core.schema import (AREAS, MAX_ACTIVE_LISTINGS, MIN_SHOWN_FIT, QUESTION_UI, SCAM_DISCOUNT, TRAIT_RANGE,
-                         TRAIT_SHORT, TRAITS, WEIGHTS)
+from core.schema import (AREAS, FLAT_SIZES, MAX_ACTIVE_LISTINGS, MIN_SHOWN_FIT, QUESTION_UI, SCAM_DISCOUNT, TRAIT_RANGE,
+                         TRAIT_SHORT, TRAITS, WEIGHTS, violates_dealbreaker)
 
 AREA = {a["area"]: a for a in AREAS}
 _W = np.array([WEIGHTS[t] for t in TRAITS])
@@ -307,17 +308,16 @@ def _group_row(ctx, group, li):
             "interested": [], "signal": round(score or 0)}
 
 
-def flat_results(ctx, me, listings, *, members=None, sort="people", shareable_only=False, budget=None,
+def flat_results(ctx, me, listings, *, members=None, shareable_only=False, budget=None,
                  areas=None, kind=None, max_commute=None):
-    """Live flats `me` (or me and my group) could move into, filtered and sorted.
+    """Live flats `me` (or me and my group) could move into, filtered, best people fit first.
 
     members: everyone in my group when searching as a group (me included), else None.
-    sort="people": flats with a people signal first, best fit first. The signal
+    Order: flats with a people signal first, best fit first. The signal
       is fit with the people already living there; for an empty flat, the best
       fit among people interested in it (MIN_SHOWN_FIT or more). In a group it's
       the group's fit with any residents. Flats without a signal follow, by
       rent and commute.
-    sort="practical": rent against budget, then commute.
     shareable_only: rooms in a shared flat, or whole flats with 2+ free rooms
       (just me only; a group search always needs a room each).
     budget=(lo, hi) keeps flats whose rooms all fall in that rent range.
@@ -346,13 +346,9 @@ def flat_results(ctx, me, listings, *, members=None, sort="people", shareable_on
         if max_commute and r["minutes"] is not None and r["minutes"] > max_commute:
             continue
         out.append(r)
-    if sort == "people":
-        # Ties (same whole-number fit) go to the flat with more free rooms: room to move in together.
-        key = lambda r: (r["signal"] is None, -round(r["signal"] or 0), -len(free_rooms(r["listing"])),  # noqa: E731
-                         -r["practical"], r["rent"], r["listing"]["id"])
-    else:
-        key = lambda r: (-r["practical"], -(r["signal"] or -1), r["rent"], r["listing"]["id"])  # noqa: E731
-    return sorted(out, key=key)
+    # Ties (same whole-number fit) go to the flat with more free rooms: room to move in together.
+    return sorted(out, key=lambda r: (r["signal"] is None, -round(r["signal"] or 0), -len(free_rooms(r["listing"])),
+                                      -r["practical"], r["rent"], r["listing"]["id"]))
 
 
 def people_results(ctx, me, limit=12):
@@ -364,6 +360,89 @@ def people_results(ctx, me, limit=12):
                    key=lambda j: (-ctx["S"][i, j], j))[:limit]
     ids = list(ctx["df"]["id"])
     return [(ids[j], float(ctx["S"][i, j])) for j in order]
+
+
+# ---------------------------------------------------------------------------
+# People: search, plain-words hard rules, adding someone to a group
+# ---------------------------------------------------------------------------
+MAX_GROUP = max(FLAT_SIZES)
+_DB_WORDS = {"no_smokers": ("no smokers", "smokes"),
+             "veg_kitchen": ("a veg-only kitchen", "eats non-veg"),
+             "no_drinking": ("no drinking at home", "drinks"),
+             "quiet_home": ("a quiet home", "likes a lively home or has guests often"),
+             "same_gender": ("a same-gender flat", "is a different gender")}
+
+
+def _first(name):
+    parts = str(name or "").split()
+    return parts[0] if parts else ""
+
+
+def hard_rule_reason(ctx, a, b):
+    """Why a and b can't share a flat, in plain words, or None. The same rules as
+    grouping.conflict_reason (budget overlap, gender mix, dealbreakers both ways)."""
+    pa, pb = profile(ctx, a), profile(ctx, b)
+    if not (pa and pb) or not conflict_reason(pa, pb):
+        return None
+    na, nb = _first(pa["name"]), _first(pb["name"])
+    if pa["budget_min"] > pb["budget_max"] or pb["budget_min"] > pa["budget_max"]:
+        return (f"{na}'s budget (₹{int(pa['budget_min']):,}–{int(pa['budget_max']):,}) doesn't overlap with "
+                f"{nb}'s (₹{int(pb['budget_min']):,}–{int(pb['budget_max']):,}).")
+    if pa["gender"] != pb["gender"]:
+        for p, n in ((pa, na), (pb, nb)):
+            if p["preferred_gender_mix"] == "same only":
+                return f"{n} only wants flatmates of the same gender."
+    for me, other, n_me, n_other in ((pa, pb, na, nb), (pb, pa, nb, na)):
+        for d in dealbreaker_list(me["dealbreakers"]):
+            if violates_dealbreaker(d, me, other):
+                rule, broken = _DB_WORDS.get(d, (d, "breaks it"))
+                return f"{n_me}'s dealbreaker is {rule}, and {n_other} {broken}."
+    return "Their hard rules don't fit together."
+
+
+def can_add(ctx, member_ids, pid):
+    """None if pid can join a group of member_ids, else the reason in plain words.
+    Checks the size limit, then every current member's hard rules both ways."""
+    if pid in member_ids:
+        return "They're already in your group."
+    if not in_cohort(ctx, pid):
+        return "They haven't answered the lifestyle quiz yet, so we can't check the fit."
+    if len(member_ids) >= MAX_GROUP:
+        return f"Your group is full ({MAX_GROUP} people)."
+    for m in member_ids:
+        why = hard_rule_reason(ctx, m, pid)
+        if why:
+            return why
+    return None
+
+
+def search_people(ctx, query, me, limit=10):
+    """People in the cohort by name or work email (never admins or landlords: they
+    aren't in the cohort). An email must match exactly, so nobody can list
+    addresses by typing part of one. Names match anywhere, case-insensitive.
+    Best fit with `me` first."""
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    df = ctx["df"]
+    if "@" in q:
+        hits = [pid for pid, e in zip(df["id"], df["email"]) if str(e).strip().lower() == q]
+    else:
+        hits = [pid for pid, n in zip(df["id"], df["name"]) if q in str(n).lower()]
+    hits = [h for h in hits if h != me]
+    return sorted(hits, key=lambda h: (-(pair(ctx, me, h)[0] or 0), h))[:limit]
+
+
+def pair_summary(ctx, a, b):
+    """What a person card says about two people: score, what they share, where
+    they differ most, and the hard-rule reason if they can't live together."""
+    score, _ = pair(ctx, a, b)
+    pa, pb = profile(ctx, a), profile(ctx, b)
+    gaps = sorted(((abs(pa[t] - pb[t]) / _RANGE[k] * _W[k], -_W[k], t) for k, t in enumerate(TRAITS)))
+    same = [TRAIT_SHORT[t] for g, _, t in gaps if g == 0][:2] or [TRAIT_SHORT[t] for _, _, t in gaps[:2]]
+    differ = [TRAIT_SHORT[t] for g, _, t in sorted(gaps, key=lambda x: (-x[0], x[1])) if g > 0][:2]
+    return {"score": score, "same": same, "differ": differ, "clash": biggest_difference(ctx, a, b),
+            "blocked": hard_rule_reason(ctx, a, b)}
 
 
 def next_best_person(ctx, member_ids, exclude=()):
